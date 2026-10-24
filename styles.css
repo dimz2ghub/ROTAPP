@@ -16,8 +16,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .brand{display:none}
 h1,h2{margin:0}
 .hd{display:flex;align-items:center;justify-content:space-between;margin:0 0 12px}
-.hd b{font-size:17px;font-weight:600}
+.hd b{font-size:17px;font-weight:600;white-space:nowrap}
 .arr{border:0;background:none;color:var(--text2);font-size:26px;line-height:1;padding:4px 12px}
+.swv{overflow:hidden;touch-action:pan-y}
+.trk{display:flex;width:300%;align-items:flex-start;transform:translate3d(-33.3333%,0,0)}
+.pg{width:33.3333%;flex:none;min-width:0}
+.side{display:flex;align-items:center;width:64px}
+.side.r{justify-content:flex-end}
+.refresh{border:0;background:none;color:var(--text2);width:30px;height:34px;font-size:20px;line-height:1;padding:0}
 .mid{display:flex;justify-content:center;margin:0 0 12px}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:var(--surface);color:var(--text);padding:7px 12px;font-size:13px}

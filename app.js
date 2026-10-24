@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.1 prototype';
+const VERSION = '0.3 prototype';
 const KEY = 'rotapp.v1';
 
 const T = {
@@ -62,7 +62,7 @@ const isWide = () => window.matchMedia('(min-width: 900px)').matches;
 
 // ---------- state ----------
 const S = {
-  tab: 'week', woff: 0, moff: 0, sheet: null, pick: null, more: false, showPast: false,
+  tab: 'month', woff: 0, moff: 0, sheet: null, pick: null, more: false, showPast: false,
   add: null, imp: null, toast: '', runSheet: null, panelOpen: true,
 };
 let toastTimer = null;
@@ -109,13 +109,15 @@ function icon(n) {
 }
 
 // ---------- screens ----------
-function weekStart() {
-  const b = addDays(today(), S.woff * 7);
+function weekStart(off) {
+  const b = addDays(today(), off * 7);
   return SET.wmode === 'cal' ? addDays(b, -((b.getDay() + 6) % 7)) : b;
 }
-function weekHtml() {
-  const s = weekStart(), e = addDays(s, 6), tk = ymd(today());
-  let h = '<div class="hd"><button class="arr" data-a="wprev" aria-label="Previous week">‹</button><b>' + lab(s, e) + '</b><button class="arr" data-a="wnext" aria-label="Next week">›</button></div>';
+// Plain refresh symbol (anticlockwise) between the left chevron and the title; shows from two steps away.
+const refreshBtn = (off) => (Math.abs(off) > 1 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
+function weekHtml(off) {
+  const s = weekStart(off), e = addDays(s, 6), tk = ymd(today());
+  let h = '<div class="hd"><span class="side"><button class="arr" data-a="wprev" aria-label="Previous week">‹</button>' + refreshBtn(off) + '</span><b>' + lab(s, e) + '</b><span class="side r"><button class="arr" data-a="wnext" aria-label="Next week">›</button></span></div>';
   h += '<div class="mid"><span class="seg"><button data-a="wmode" data-v="cal" class="' + (SET.wmode === 'cal' ? 'on' : '') + '">Mon – Sun</button><button data-a="wmode" data-v="roll" class="' + (SET.wmode === 'roll' ? 'on' : '') + '">Next 7 days</button></span></div>';
   for (let i = 0; i < 7; i++) {
     const d = addDays(s, i), k = ymd(d), c = D[k], tod = k === tk ? ' tod' : '';
@@ -133,10 +135,10 @@ function cell(n, k, c) {
   if (SET.style === 'B') return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><b class="bd" style="background:' + t.bg + ';color:' + t.fg + '">' + t.sm + '</b></button>';
   return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><span class="dot" style="background:' + t.bg + '"></span></button>';
 }
-function monthHtml() {
-  const f = new Date(today().getFullYear(), today().getMonth() + S.moff, 1);
+function monthHtml(mo) {
+  const f = new Date(today().getFullYear(), today().getMonth() + mo, 1);
   const y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
-  let h = '<div class="hd"><button class="arr" data-a="mprev" aria-label="Previous month">‹</button><b>' + MF[m] + ' ' + y + '</b><button class="arr" data-a="mnext" aria-label="Next month">›</button></div><div class="g">';
+  let h = '<div class="hd"><span class="side"><button class="arr" data-a="mprev" aria-label="Previous month">‹</button>' + refreshBtn(mo) + '</span><b>' + MF[m] + ' ' + y + '</b><span class="side r"><button class="arr" data-a="mnext" aria-label="Next month">›</button></span></div><div class="g">';
   ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((x) => { h += '<div class="w">' + x + '</div>'; });
   for (let i = 0; i < off; i++) h += '<div></div>';
   let nm = 0, nl = 0;
@@ -417,11 +419,17 @@ function restoreBackup(text) {
   } catch (err) { toast("That isn't a Rotapp backup"); }
 }
 
+// ---------- swipe track: previous, current and next page side by side ----------
+function track(fn, off) {
+  const pg = (o, cur) => '<div class="pg"' + (cur ? '' : ' aria-hidden="true" inert') + '>' + fn(o) + '</div>';
+  return '<div class="swv"><div class="trk">' + pg(off - 1, false) + pg(off, true) + pg(off + 1, false) + '</div></div>';
+}
+
 // ---------- render ----------
 function render() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
-  scr.innerHTML = t === 'week' ? weekHtml() : t === 'month' ? monthHtml() : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
+  scr.innerHTML = t === 'week' ? track(weekHtml, S.woff) : t === 'month' ? track(monthHtml, S.moff) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
   main.scrollTop = top;
   const wide = isWide(), panel = document.getElementById('panel');
   let ov = '', pnl = '';
@@ -448,16 +456,16 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
+  if (SW.swiped) return;
   const el = e.target.closest('[data-a]');
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
   if (a === 'tab') { S.tab = v; S.sheet = null; S.runSheet = null; S.imp = null; S.add = null; }
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
-  else if (a === 'wprev') S.woff--;
-  else if (a === 'wnext') S.woff++;
-  else if (a === 'mprev') S.moff--;
-  else if (a === 'mnext') S.moff++;
+  else if (a === 'wprev' || a === 'mprev') { slideTo(-1); return; }
+  else if (a === 'wnext' || a === 'mnext') { slideTo(1); return; }
+  else if (a === 'today') { if (S.tab === 'week') S.woff = 0; else S.moff = 0; }
   else if (a === 'style') { SET.style = v; save(); }
   else if (a === 'themeset') { SET.theme = v; save(); }
   else if (a === 'day') { S.sheet = k; S.pick = null; S.more = false; S.runSheet = null; }
@@ -524,6 +532,67 @@ document.getElementById('backupFile').addEventListener('change', async (e) => {
   try { restoreBackup(await f.text()); } catch (err) { toast("Couldn't read that file"); }
 });
 window.matchMedia('(min-width: 900px)').addEventListener('change', render);
+
+
+// ---------- swiping between weeks and months ----------
+// Only transform is animated, so it runs on the graphics chip and costs almost nothing.
+const SW = { on: false, id: null, x0: 0, y0: 0, t0: 0, dx: 0, lock: null, el: null, W: 0, busy: false, swiped: false };
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const canSwipe = () => (S.tab === 'week' || S.tab === 'month') && S.sheet == null && S.runSheet == null && !S.imp && !SW.busy;
+function shift(dir, tab) {
+  if (tab === 'week') S.woff += dir; else if (tab === 'month') S.moff += dir;
+  render();
+}
+// dir: 1 = next page, -1 = previous page, 0 = spring back
+function slideTo(dir) {
+  if (SW.busy) return;
+  const tab = S.tab, el = document.querySelector('.trk');
+  if (!el || reduceMotion()) { if (dir) shift(dir, tab); else if (el) el.style.transform = ''; return; }
+  SW.busy = true;
+  el.style.willChange = 'transform';
+  el.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
+  el.style.transform = 'translate3d(' + (dir === 0 ? '-33.3333%' : dir > 0 ? '-66.6667%' : '0%') + ',0,0)';
+  let done = false;
+  const fin = (ev) => {
+    if (done || (ev && ev.target !== el)) return;
+    done = true; el.removeEventListener('transitionend', fin); SW.busy = false;
+    if (dir) shift(dir, tab); else { el.style.transition = ''; el.style.willChange = ''; el.style.transform = ''; }
+  };
+  el.addEventListener('transitionend', fin);
+  setTimeout(() => fin(), 320);
+}
+const scrEl = document.getElementById('scr');
+scrEl.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'mouse' || !e.isPrimary || !canSwipe() || !scrEl.querySelector('.swv')) return;
+  SW.on = true; SW.id = e.pointerId; SW.x0 = e.clientX; SW.y0 = e.clientY; SW.t0 = e.timeStamp; SW.dx = 0; SW.lock = null;
+  SW.W = scrEl.querySelector('.swv').clientWidth || 1;
+});
+scrEl.addEventListener('pointermove', (e) => {
+  if (!SW.on || e.pointerId !== SW.id) return;
+  const dx = e.clientX - SW.x0, dy = e.clientY - SW.y0;
+  if (SW.lock === null) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dx) > Math.abs(dy) * 1.5) {
+      SW.lock = 'x'; SW.el = scrEl.querySelector('.trk');
+      SW.el.style.transition = 'none'; SW.el.style.willChange = 'transform';
+      try { scrEl.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    } else { SW.lock = 'y'; SW.on = false; return; }
+  }
+  SW.dx = dx;
+  SW.el.style.transform = 'translate3d(calc(-33.3333% + ' + dx + 'px),0,0)';
+});
+function endSwipe(e, cancelled) {
+  if (!SW.on || e.pointerId !== SW.id) return;
+  SW.on = false;
+  if (SW.lock !== 'x') return;
+  SW.swiped = true; setTimeout(() => { SW.swiped = false; }, 350);
+  const v = SW.dx / Math.max(1, e.timeStamp - SW.t0);
+  let dir = 0;
+  if (!cancelled && (Math.abs(SW.dx) > SW.W / 3 || (Math.abs(v) > 0.4 && Math.abs(SW.dx) > 24))) dir = SW.dx < 0 ? 1 : -1;
+  slideTo(dir);
+}
+scrEl.addEventListener('pointerup', (e) => endSwipe(e, false));
+scrEl.addEventListener('pointercancel', (e) => endSwipe(e, true));
 
 // ---------- start ----------
 load();
