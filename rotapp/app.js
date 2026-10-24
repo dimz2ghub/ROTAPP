@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.3 prototype';
+const VERSION = '0.4 prototype';
 const KEY = 'rotapp.v1';
 
 const T = {
@@ -115,10 +115,10 @@ function weekStart(off) {
 }
 // Plain refresh symbol (anticlockwise) between the left chevron and the title; shows from two steps away.
 const refreshBtn = (off) => (Math.abs(off) > 1 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
-function weekHtml(off) {
-  const s = weekStart(off), e = addDays(s, 6), tk = ymd(today());
-  let h = '<div class="hd"><span class="side"><button class="arr" data-a="wprev" aria-label="Previous week">‹</button>' + refreshBtn(off) + '</span><b>' + lab(s, e) + '</b><span class="side r"><button class="arr" data-a="wnext" aria-label="Next week">›</button></span></div>';
-  h += '<div class="mid"><span class="seg"><button data-a="wmode" data-v="cal" class="' + (SET.wmode === 'cal' ? 'on' : '') + '">Mon – Sun</button><button data-a="wmode" data-v="roll" class="' + (SET.wmode === 'roll' ? 'on' : '') + '">Next 7 days</button></span></div>';
+function weekTitle(off) { const s = weekStart(off); return lab(s, addDays(s, 6)); }
+function weekBody(off) {
+  const s = weekStart(off), tk = ymd(today());
+  let h = '';
   for (let i = 0; i < 7; i++) {
     const d = addDays(s, i), k = ymd(d), c = D[k], tod = k === tk ? ' tod' : '';
     const nm = '<div class="n"><b>' + DN[d.getDay()] + '</b>' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>';
@@ -135,23 +135,21 @@ function cell(n, k, c) {
   if (SET.style === 'B') return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><b class="bd" style="background:' + t.bg + ';color:' + t.fg + '">' + t.sm + '</b></button>';
   return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><span class="dot" style="background:' + t.bg + '"></span></button>';
 }
-function monthHtml(mo) {
-  const f = new Date(today().getFullYear(), today().getMonth() + mo, 1);
-  const y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
-  let h = '<div class="hd"><span class="side"><button class="arr" data-a="mprev" aria-label="Previous month">‹</button>' + refreshBtn(mo) + '</span><b>' + MF[m] + ' ' + y + '</b><span class="side r"><button class="arr" data-a="mnext" aria-label="Next month">›</button></span></div><div class="g">';
-  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((x) => { h += '<div class="w">' + x + '</div>'; });
+const monthFirst = (mo) => new Date(today().getFullYear(), today().getMonth() + mo, 1);
+function monthTitle(mo) { const f = monthFirst(mo); return MF[f.getMonth()] + ' ' + f.getFullYear(); }
+// Days only. The frame is always six rows tall; shorter months sit in the middle of it.
+function monthBody(mo) {
+  const f = monthFirst(mo), y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
+  let h = '<div class="frame"><div class="g">';
   for (let i = 0; i < off; i++) h += '<div></div>';
+  for (let n = 1; n <= dim; n++) { const k = y + '-' + p2(m + 1) + '-' + p2(n); h += cell(n, k, D[k]); }
+  return h + '</div></div>';
+}
+function monthSummary(mo) {
+  const f = monthFirst(mo), y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate();
   let nm = 0, nl = 0;
-  for (let n = 1; n <= dim; n++) {
-    const k = y + '-' + p2(m + 1) + '-' + p2(n), c = D[k];
-    if (c === 'M' || c === 'MA') nm++;
-    if (c === 'L' || c === 'LA') nl++;
-    h += cell(n, k, c);
-  }
-  h += '</div>';
-  if (SET.style === 'C') { h += '<div class="lgd">'; COMMON.forEach((x) => { h += '<span><i style="background:' + T[x].bg + '"></i>' + T[x].n + '</span>'; }); h += '</div>'; }
-  h += '<div class="sum">' + ((nm + nl) ? (nm + nl) + ' shifts · ' + nm + ' M · ' + nl + ' L' : 'No shifts yet') + '</div>';
-  return h;
+  for (let n = 1; n <= dim; n++) { const c = D[y + '-' + p2(m + 1) + '-' + p2(n)]; if (c === 'M' || c === 'MA') nm++; if (c === 'L' || c === 'LA') nl++; }
+  return (nm + nl) ? (nm + nl) + ' shifts · ' + nm + ' M · ' + nl + ' L' : 'No shifts yet';
 }
 function leaveHtml() {
   const y = leaveYear(), c = countYear(y);
@@ -419,17 +417,32 @@ function restoreBackup(text) {
   } catch (err) { toast("That isn't a Rotapp backup"); }
 }
 
-// ---------- swipe track: previous, current and next page side by side ----------
-function track(fn, off) {
-  const pg = (o, cur) => '<div class="pg"' + (cur ? '' : ' aria-hidden="true" inert') + '>' + fn(o) + '</div>';
-  return '<div class="swv"><div class="trk">' + pg(off - 1, false) + pg(off, true) + pg(off + 1, false) + '</div></div>';
+// ---------- Week and Month: fixed header, only the days slide ----------
+const PAGED = {
+  week: { title: weekTitle, body: weekBody, off: () => S.woff, set: (v) => { S.woff = v; } },
+  month: { title: monthTitle, body: monthBody, off: () => S.moff, set: (v) => { S.moff = v; } },
+};
+function pagedHtml(kind) {
+  const P = PAGED[kind], o = P.off();
+  let h = '<div class="hd"><span class="side"><button class="arr" data-a="prev" aria-label="Previous ' + kind + '">‹</button>' + refreshBtn(o) + '</span>';
+  h += '<div class="reel" aria-live="polite">' + [-1, 0, 1].map((s) => '<span class="rt"' + (s ? ' aria-hidden="true"' : '') + ' data-s="' + s + '">' + P.title(o + s) + '</span>').join('') + '</div>';
+  h += '<span class="side r"><button class="arr" data-a="next" aria-label="Next ' + kind + '">›</button></span></div>';
+  if (kind === 'week') h += '<div class="mid"><span class="seg"><button data-a="wmode" data-v="cal" class="' + (SET.wmode === 'cal' ? 'on' : '') + '">Mon – Sun</button><button data-a="wmode" data-v="roll" class="' + (SET.wmode === 'roll' ? 'on' : '') + '">Next 7 days</button></span></div>';
+  else h += '<div class="g wd">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('') + '</div>';
+  h += '<div class="swv"><div class="trk">' + [o - 1, o, o + 1].map((x) => '<div class="pg"' + (x === o ? '' : ' aria-hidden="true" inert') + '>' + P.body(x) + '</div>').join('') + '</div></div>';
+  if (kind === 'month') {
+    if (SET.style === 'C') { h += '<div class="lgd">'; COMMON.forEach((x) => { h += '<span><i style="background:' + T[x].bg + '"></i>' + T[x].n + '</span>'; }); h += '</div>'; }
+    h += '<div class="sum">' + monthSummary(o) + '</div>';
+  }
+  return h;
 }
 
 // ---------- render ----------
 function render() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
-  scr.innerHTML = t === 'week' ? track(weekHtml, S.woff) : t === 'month' ? track(monthHtml, S.moff) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
+  scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
+  bindTrack();
   main.scrollTop = top;
   const wide = isWide(), panel = document.getElementById('panel');
   let ov = '', pnl = '';
@@ -456,16 +469,16 @@ function render() {
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
-  if (SW.swiped) return;
+  if (swallowClick) return;
   const el = e.target.closest('[data-a]');
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
   if (a === 'tab') { S.tab = v; S.sheet = null; S.runSheet = null; S.imp = null; S.add = null; }
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
-  else if (a === 'wprev' || a === 'mprev') { slideTo(-1); return; }
-  else if (a === 'wnext' || a === 'mnext') { slideTo(1); return; }
-  else if (a === 'today') { if (S.tab === 'week') S.woff = 0; else S.moff = 0; }
+  else if (a === 'prev') { interrupt(); animateTo(-1); return; }
+  else if (a === 'next') { interrupt(); animateTo(1); return; }
+  else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
   else if (a === 'style') { SET.style = v; save(); }
   else if (a === 'themeset') { SET.theme = v; save(); }
   else if (a === 'day') { S.sheet = k; S.pick = null; S.more = false; S.runSheet = null; }
@@ -535,64 +548,103 @@ window.matchMedia('(min-width: 900px)').addEventListener('change', render);
 
 
 // ---------- swiping between weeks and months ----------
-// Only transform is animated, so it runs on the graphics chip and costs almost nothing.
-const SW = { on: false, id: null, x0: 0, y0: 0, t0: 0, dx: 0, lock: null, el: null, W: 0, busy: false, swiped: false };
+// Only transforms are animated, so it runs on the graphics chip and costs almost nothing.
+const SNAP_MS = 900, SNAP_EASE = 'cubic-bezier(.16,1,.3,1)', GAP = 16, REEL_H = 26;
+let TR = null, job = null, drag = null, swallowClick = false;
 const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const canSwipe = () => (S.tab === 'week' || S.tab === 'month') && S.sheet == null && S.runSheet == null && !S.imp && !SW.busy;
-function shift(dir, tab) {
-  if (tab === 'week') S.woff += dir; else if (tab === 'month') S.moff += dir;
-  render();
+function bindTrack() {
+  job = null;
+  const scr = document.getElementById('scr'), swv = scr.querySelector('.swv');
+  TR = swv ? { swv, trk: swv.querySelector('.trk'), pgs: [...swv.querySelectorAll('.pg')], rts: [...scr.querySelectorAll('.rt')] } : null;
+  if (TR) { transitions(false); layout(0); }
 }
-// dir: 1 = next page, -1 = previous page, 0 = spring back
-function slideTo(dir) {
-  if (SW.busy) return;
-  const tab = S.tab, el = document.querySelector('.trk');
-  if (!el || reduceMotion()) { if (dir) shift(dir, tab); else if (el) el.style.transform = ''; return; }
-  SW.busy = true;
-  el.style.willChange = 'transform';
-  el.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1)';
-  el.style.transform = 'translate3d(' + (dir === 0 ? '-33.3333%' : dir > 0 ? '-66.6667%' : '0%') + ',0,0)';
-  let done = false;
-  const fin = (ev) => {
-    if (done || (ev && ev.target !== el)) return;
-    done = true; el.removeEventListener('transitionend', fin); SW.busy = false;
-    if (dir) shift(dir, tab); else { el.style.transition = ''; el.style.willChange = ''; el.style.transform = ''; }
+// p: -1 = fully on the previous page, 0 = current, 1 = fully on the next page
+function layout(p) {
+  const W = TR.swv.clientWidth + GAP;
+  TR.trk.style.transform = 'translate3d(' + (-W - p * W) + 'px,0,0)';
+  TR.rts.forEach((r) => { const d = +r.dataset.s - p; r.style.transform = 'translate3d(0,' + (d * REEL_H) + 'px,0)'; r.style.opacity = Math.max(0, 1 - Math.abs(d) * 0.85); });
+}
+function transitions(on) {
+  const t = SNAP_MS + 'ms ' + SNAP_EASE;
+  TR.trk.style.transition = on ? 'transform ' + t : 'none';
+  TR.rts.forEach((r) => { r.style.transition = on ? 'transform ' + t + ', opacity ' + t : 'none'; });
+}
+function run(p, dir, done) {
+  if (reduceMotion()) { layout(p); if (done) done(); return; }
+  void TR.trk.offsetWidth; // apply the start position before animating
+  transitions(true); layout(p);
+  const j = { dir, done, fin: false, timer: 0 };
+  j.end = (e) => {
+    if (j.fin || (e && (e.target !== TR.trk || e.propertyName !== 'transform'))) return;
+    j.fin = true; clearTimeout(j.timer); TR.trk.removeEventListener('transitionend', j.end); job = null;
+    if (done) done(); else transitions(false);
   };
-  el.addEventListener('transitionend', fin);
-  setTimeout(() => fin(), 320);
+  TR.trk.addEventListener('transitionend', j.end);
+  j.timer = setTimeout(() => j.end(), SNAP_MS + 120);
+  job = j;
 }
+// dir: 1 = next, -1 = previous, 0 = spring back. target lets ↺ land on today in one slide.
+function animateTo(dir, target) {
+  if (!TR) return;
+  if (dir === 0) { run(0, 0, null); return; }
+  const tab = S.tab, P = PAGED[tab], o = P.off();
+  if (target == null) target = o + dir;
+  if (target !== o + dir) {
+    const i = dir > 0 ? 2 : 0;
+    TR.pgs[i].innerHTML = P.body(target);
+    TR.rts[i].textContent = P.title(target);
+  }
+  run(dir, dir, () => { if (S.tab === tab) { P.set(target); render(); } });
+}
+// A new swipe during a slide catches the page where it is, rather than being ignored.
+function interrupt() {
+  if (!job || !TR) return 0;
+  const j = job; job = null; j.fin = true; clearTimeout(j.timer); TR.trk.removeEventListener('transitionend', j.end);
+  const W = TR.swv.clientWidth + GAP;
+  const tx = new DOMMatrixReadOnly(getComputedStyle(TR.trk).transform).m41;
+  let p = (-W - tx) / W;
+  if (j.dir) { j.done(); p -= j.dir; }
+  transitions(false); layout(p);
+  return p;
+}
+const canSwipe = () => TR && (S.tab === 'week' || S.tab === 'month') && S.sheet == null && S.runSheet == null && !S.imp;
 const scrEl = document.getElementById('scr');
 scrEl.addEventListener('pointerdown', (e) => {
-  if (e.pointerType === 'mouse' || !e.isPrimary || !canSwipe() || !scrEl.querySelector('.swv')) return;
-  SW.on = true; SW.id = e.pointerId; SW.x0 = e.clientX; SW.y0 = e.clientY; SW.t0 = e.timeStamp; SW.dx = 0; SW.lock = null;
-  SW.W = scrEl.querySelector('.swv').clientWidth || 1;
+  if (e.pointerType === 'mouse' || !e.isPrimary || !canSwipe()) return;
+  if (e.target.closest('.hd button, .mid button')) return; // header buttons handle their own taps
+  const p0 = interrupt();
+  drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, lock: null, dx: 0, p0, p: p0, W: TR.swv.clientWidth + GAP, s: [{ x: e.clientX, t: e.timeStamp }] };
 });
 scrEl.addEventListener('pointermove', (e) => {
-  if (!SW.on || e.pointerId !== SW.id) return;
-  const dx = e.clientX - SW.x0, dy = e.clientY - SW.y0;
-  if (SW.lock === null) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    if (Math.abs(dx) > Math.abs(dy) * 1.5) {
-      SW.lock = 'x'; SW.el = scrEl.querySelector('.trk');
-      SW.el.style.transition = 'none'; SW.el.style.willChange = 'transform';
-      try { scrEl.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
-    } else { SW.lock = 'y'; SW.on = false; return; }
+  if (!drag || e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  if (drag.lock === null) {
+    if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    if (Math.abs(dx) > Math.abs(dy) * 1.2) { drag.lock = 'x'; transitions(false); try { scrEl.setPointerCapture(e.pointerId); } catch (err) { /* fine */ } }
+    else { const d = drag; drag = null; if (d.p0) animateTo(0); return; }
   }
-  SW.dx = dx;
-  SW.el.style.transform = 'translate3d(calc(-33.3333% + ' + dx + 'px),0,0)';
+  drag.dx = dx; drag.s.push({ x: e.clientX, t: e.timeStamp }); if (drag.s.length > 8) drag.s.shift();
+  drag.p = Math.max(-1, Math.min(1, drag.p0 - dx / drag.W)); layout(drag.p);
 });
-function endSwipe(e, cancelled) {
-  if (!SW.on || e.pointerId !== SW.id) return;
-  SW.on = false;
-  if (SW.lock !== 'x') return;
-  SW.swiped = true; setTimeout(() => { SW.swiped = false; }, 350);
-  const v = SW.dx / Math.max(1, e.timeStamp - SW.t0);
+function endDrag(e, cancelled) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag; drag = null;
+  if (d.lock !== 'x') { if (d.p0) animateTo(0); return; }
+  swallowClick = true; setTimeout(() => { swallowClick = false; }, 300);
+  // speed over the last ~100 ms, so a quick flick counts even after a slow start
+  const last = d.s[d.s.length - 1]; let first = d.s[0];
+  for (const q of d.s) { if (last.t - q.t <= 100) { first = q; break; } }
+  const v = (last.x - first.x) / Math.max(1, last.t - first.t);
   let dir = 0;
-  if (!cancelled && (Math.abs(SW.dx) > SW.W / 3 || (Math.abs(v) > 0.4 && Math.abs(SW.dx) > 24))) dir = SW.dx < 0 ? 1 : -1;
-  slideTo(dir);
+  if (!cancelled) {
+    if (Math.abs(v) > 0.3 && Math.abs(d.dx) > 16) dir = v < 0 ? 1 : -1;
+    else if (Math.abs(d.p) > 1 / 3) dir = d.p > 0 ? 1 : -1;
+  }
+  animateTo(dir);
 }
-scrEl.addEventListener('pointerup', (e) => endSwipe(e, false));
-scrEl.addEventListener('pointercancel', (e) => endSwipe(e, true));
+scrEl.addEventListener('pointerup', (e) => endDrag(e, false));
+scrEl.addEventListener('pointercancel', (e) => endDrag(e, true));
+window.addEventListener('resize', () => { if (TR && !job && !drag) layout(0); });
 
 // ---------- start ----------
 load();
