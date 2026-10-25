@@ -1,7 +1,7 @@
 // Rotapp xlsx reader. Needs JSZip (passed in) and the browser's DOMParser.
 // Finds the row of dates, then your row, on every sheet that looks like a rota month.
 
-import { CODE, MONTHS, HEADER_RE, WD, norm, pickMonthYear } from './reader.js';
+import { CODE, MONTHS, HEADER_RE, WD, norm, pickMonthYear, collectTeam, codeOf } from './reader.js';
 
 const colNum = (letters) => { let n = 0; for (const ch of letters) n = n * 26 + ch.charCodeAt(0) - 64; return n; };
 const refParts = (ref) => { const m = /^([A-Z]+)(\d+)$/.exec(ref); return m ? { c: colNum(m[1]), r: +m[2] } : null; };
@@ -209,8 +209,15 @@ function readSheet(sheet, parsed, opts) {
     const code = CODE[rawText.toUpperCase().replace(/[^A-Z]/g, '')];
     return code ? { n: d.n, wd: d.wd, raw: rawText, code } : { n: d.n, wd: d.wd, raw: rawText, code: '?', unknown: true };
   });
+  // Everyone else on the sheet, for the team view.
+  const labelRows = [...rows.keys()].filter((r) => r > run.row).sort((a, b) => a - b).map((r) => {
+    const rc = rows.get(r), label = labelOf(rc);
+    return label ? { r, label, days: () => { const o = {}; for (const d of dayCols) { const c = rc.get(d.c); o[d.n] = codeOf(c ? c.v : null); } return o; } } : null;
+  }).filter(Boolean);
+  const team = collectTeam(labelRows, (row) => row.r === pick.r);
+
   return {
-    sheet: sheet.name, month, year, daysInMonth: dim, days, matched: pick.label.trim(), warnings,
+    sheet: sheet.name, month, year, daysInMonth: dim, days, matched: pick.label.trim(), warnings, team,
     blanks: days.filter((d) => d.blank).map((d) => d.n),
     unknown: days.filter((d) => d.unknown).map((d) => ({ n: d.n, raw: d.raw })),
     allBlank: days.every((d) => d.blank),

@@ -111,3 +111,67 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
   .toast{bottom:24px}
   .sheet,.dim.sheetdim{display:none}
 }
+
+/* ---------- 0.5: team view ---------- */
+.vpill{display:flex;justify-content:center;margin:-4px 0 10px}
+.vpill span{font-size:12px;background:var(--surface2);color:var(--text2);border-radius:12px;padding:3px 10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 2px}
+.sel{border:1px solid var(--border);border-radius:8px;padding:7px 9px;background:var(--surface);color:var(--text);font:inherit;font-size:14px;max-width:210px;min-width:0}
+
+/* ---------- 0.5: swap shifts ---------- */
+.swapbtn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:10px;border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:10px;font-weight:600;font-size:14px}
+.swapbtn:disabled{opacity:.45;cursor:default}
+.stp{font-size:11px;color:var(--muted);margin-bottom:2px}
+.sh{margin:0 0 4px;font-size:16px;font-weight:600}
+.grp{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:12px 0 2px}
+.prow{display:flex;justify-content:space-between;align-items:center;width:100%;border:0;border-top:1px solid var(--border);background:none;padding:9px 2px;font-size:14px;text-align:left}
+.prow.same{opacity:.4}
+.chip{min-width:38px;text-align:center;border-radius:5px;padding:2px 6px;font-size:12px;font-weight:600;display:inline-block}
+.mh{font-size:12px;font-weight:600;margin:10px 0 2px}
+.c.sm{height:36px}
+.c.sel{outline:2.5px solid var(--accent);outline-offset:-2px}
+.c.mine{outline:2px dashed var(--text2);outline-offset:-2px}
+.c.sel.mine{outline-style:solid}
+.c:disabled{cursor:default}
+.cmp{border:1px solid var(--border);border-radius:10px;padding:10px;margin-top:10px}
+.cmp .d{font-size:13px;font-weight:600;margin-bottom:6px}
+.cmp .r{display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:3px 0}
+.cmp .r span:last-child{display:flex;align-items:center;gap:6px}
+.acts button:disabled{opacity:.45;cursor:default}
+
+/* ---------- 0.5: Settings as grouped cards ---------- */
+#main.grouped{background:var(--bg)}
+.stitle{font-size:28px;font-weight:700;margin:4px 4px 14px}
+.herocard{background:#185FA5;color:#fff;border-radius:14px;margin-bottom:14px;overflow:hidden}
+.herorow{display:flex;align-items:stretch}
+.hmain{flex:1;display:flex;align-items:center;gap:12px;border:0;background:none;color:#fff;padding:14px 8px 14px 16px;text-align:left;min-width:0}
+.hmain b{display:block;font-size:16px}
+.hmain small{display:block;font-size:12px;opacity:.85;overflow:hidden;text-overflow:ellipsis}
+.hic{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;flex:none}
+.hic svg{width:20px;height:20px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.hchev{width:52px;flex:none;border:0;border-left:1px solid rgba(255,255,255,.25);background:none;color:#fff;font-size:16px}
+.hinner{margin:0 16px;padding:10px 0 14px;border-top:1px solid rgba(255,255,255,.25)}
+.hk{font-size:12px;opacity:.85}
+.hbtns{display:flex;gap:8px;margin-top:8px}
+.hbtns button{flex:1;padding:10px;border-radius:10px;border:0;background:rgba(255,255,255,.18);color:#fff;font-weight:600;font-size:14px}
+.scard{background:var(--surface);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.ch{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:13px 14px;text-align:left}
+.sic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;color:#fff}
+.sic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ch .t{flex:1;min-width:0}
+.ch .t b{display:block;font-size:15px;font-weight:600}
+.ch .t small{display:block;font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chev{display:inline-block;color:var(--muted);font-size:14px;transition:transform .3s ease}
+.hchev .chev{color:#fff}
+.scard.open .chev,.herocard.open .chev{transform:rotate(180deg)}
+.cb{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s ease}
+.scard.open .cb,.herocard.open .cb{grid-template-rows:1fr}
+.cb>div{overflow:hidden}
+.inner{margin:0 14px;border-top:1px solid var(--border)}
+.it{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border);font-size:14px}
+.it:last-child{border-bottom:0}
+.it.col{display:block}
+.it .fld.wide{width:190px;margin:0}
+.ticks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:8px;font-size:13px}
+.ticks label{display:flex;align-items:center;gap:6px}
+@media (prefers-reduced-motion: reduce){.cb,.chev{transition:none}}

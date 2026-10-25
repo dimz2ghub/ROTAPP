@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.4 prototype';
+const VERSION = '0.5 prototype';
 const KEY = 'rotapp.v1';
 
 const T = {
@@ -26,7 +26,9 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal' };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null };
+// Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
+let TEAM = { people: {}, groups: [] };
 let canSave = true;
 
 function load() {
@@ -36,12 +38,22 @@ function load() {
     const d = JSON.parse(raw);
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
+    if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [] };
+    tidyShowing();
   } catch (e) { canSave = false; }
 }
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify({ v: 1, days: D, set: SET })); canSave = true; }
+  try { localStorage.setItem(KEY, JSON.stringify({ v: 2, days: D, set: SET, team: TEAM })); canSave = true; }
   catch (e) { canSave = false; }
 }
+
+// ---------- team ----------
+const latestNames = () => TEAM.groups.flatMap((g) => g[1]);
+const viewingOther = () => !!(SET.showing && SET.showing !== SET.name && TEAM.people[SET.showing]);
+const shown = () => (viewingOther() ? TEAM.people[SET.showing].d : D);
+// Only people in the most recent import appear in the list; if the one being viewed drops off, go back to you.
+function tidyShowing() { if (SET.showing && (SET.showing === SET.name || !latestNames().includes(SET.showing))) SET.showing = null; }
+const othersIn = (groups) => groups.map(([g, ns]) => [g, ns.filter((n) => n !== SET.name)]).filter((x) => x[1].length);
 
 // ---------- dates ----------
 const p2 = (n) => String(n).padStart(2, '0');
@@ -117,10 +129,10 @@ function weekStart(off) {
 const refreshBtn = (off) => (Math.abs(off) > 1 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
 function weekTitle(off) { const s = weekStart(off); return lab(s, addDays(s, 6)); }
 function weekBody(off) {
-  const s = weekStart(off), tk = ymd(today());
+  const s = weekStart(off), tk = ymd(today()), DD = shown();
   let h = '';
   for (let i = 0; i < 7; i++) {
-    const d = addDays(s, i), k = ymd(d), c = D[k], tod = k === tk ? ' tod' : '';
+    const d = addDays(s, i), k = ymd(d), c = DD[k], tod = k === tk ? ' tod' : '';
     const nm = '<div class="n"><b>' + DN[d.getDay()] + '</b>' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>';
     if (!c) h += '<button class="card empty' + tod + '" data-a="day" data-k="' + k + '">' + nm + '<div class="l">–</div></button>';
     else { const t = T[c]; h += '<button class="card' + tod + '" data-a="day" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '">' + nm + '<div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div></button>'; }
@@ -140,15 +152,17 @@ function monthTitle(mo) { const f = monthFirst(mo); return MF[f.getMonth()] + ' 
 // Days only. The frame is always six rows tall; shorter months sit in the middle of it.
 function monthBody(mo) {
   const f = monthFirst(mo), y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
+  const DD = shown();
   let h = '<div class="frame"><div class="g">';
   for (let i = 0; i < off; i++) h += '<div></div>';
-  for (let n = 1; n <= dim; n++) { const k = y + '-' + p2(m + 1) + '-' + p2(n); h += cell(n, k, D[k]); }
+  for (let n = 1; n <= dim; n++) { const k = y + '-' + p2(m + 1) + '-' + p2(n); h += cell(n, k, DD[k]); }
   return h + '</div></div>';
 }
 function monthSummary(mo) {
   const f = monthFirst(mo), y = f.getFullYear(), m = f.getMonth(), dim = new Date(y, m + 1, 0).getDate();
   let nm = 0, nl = 0;
-  for (let n = 1; n <= dim; n++) { const c = D[y + '-' + p2(m + 1) + '-' + p2(n)]; if (c === 'M' || c === 'MA') nm++; if (c === 'L' || c === 'LA') nl++; }
+  const DD = shown();
+  for (let n = 1; n <= dim; n++) { const c = DD[y + '-' + p2(m + 1) + '-' + p2(n)]; if (c === 'M' || c === 'MA') nm++; if (c === 'L' || c === 'LA') nl++; }
   return (nm + nl) ? (nm + nl) + ' shifts · ' + nm + ' M · ' + nl + ' L' : 'No shifts yet';
 }
 function leaveHtml() {
@@ -156,7 +170,7 @@ function leaveHtml() {
   let h = '<div class="hd"><b>Leave</b><span class="k">' + y + '</span></div>';
   if (SET.allow == null) {
     h += '<div class="k">Holiday used</div><div class="big">' + c.H + ' <span class="k">days</span></div>';
-    h += '<button class="lnk" data-a="gosettings" style="text-align:left;padding-left:0">Set your yearly allowance in Settings</button>';
+    h += '<div class="k" style="padding:4px 0 8px">Set your yearly allowance at the bottom of this page.</div>';
   } else {
     const tot = SET.allow + SET.carry, rem = tot - c.H;
     h += '<div class="k">Holiday remaining</div><div class="big">' + rem + ' <span class="k">of ' + tot + ' days</span></div>';
@@ -168,16 +182,20 @@ function leaveHtml() {
   h += '<div class="rw"><span><i class="sw" style="background:' + T.X.bg + '"></i>Other</span><b>' + c.X + '</b></div>';
   h += '<div class="sec">Booked leave</div>';
   const t0 = today(), runs = leaveRuns(y);
-  let shown = 0;
+  let nShown = 0;
   runs.forEach((r, i) => {
     const past = r.e < t0;
     if (past && !S.showPast) return;
-    shown++;
+    nShown++;
     h += '<button class="rw" data-a="run" data-v="' + i + '"><span>' + lab(r.s, r.e) + ' · ' + T[r.t].n + (past ? ' <span class="k">(past)</span>' : '') + '</span><b>' + r.n + (r.n === 1 ? ' day' : ' days') + '</b></button>';
   });
-  if (!shown) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
+  if (!nShown) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
   h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave') + '</button>';
   h += '<button class="btn" data-a="add">Add leave</button>';
+  // Holiday settings moved here from Settings (placeholder until the Leave tab is redesigned).
+  h += '<div class="sec">Allowance</div>';
+  h += '<div class="strow"><label for="setAllow">Yearly allowance (days)</label><input class="fld" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (SET.allow == null ? '' : SET.allow) + '" placeholder="Not set"></div>';
+  h += '<div class="strow"><label for="setCarry">Carried over <span class="k">(max 2)</span></label><input class="fld" id="setCarry" type="number" inputmode="numeric" min="0" max="2" value="' + SET.carry + '"></div>';
   return h;
 }
 function addDefaults() { const t = today(); return { type: 'H', start: ymd(t), end: ymd(t), edit: null }; }
@@ -221,25 +239,58 @@ function addHtml() {
   h += '<div class="acts"><button data-a="acancel">Cancel</button><button class="p" data-a="asave">Save leave</button></div>';
   return h;
 }
+const SICON = {
+  imp: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+  rota: ['#00A36C', '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>'],
+  look: ['#8E5CC9', '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>'],
+};
+const shortDate = (k) => { const d = pk(k); return d.getDate() + ' ' + MN[d.getMonth()]; };
+function personOptions(selected, withMe) {
+  let h = '';
+  if (withMe) h += '<option value="">Me (' + esc(SET.name) + ')</option>';
+  const groups = withMe ? othersIn(TEAM.groups) : TEAM.groups;
+  groups.forEach(([g, ns]) => { h += '<optgroup label="' + esc(g) + '">' + ns.map((n) => '<option' + (n === selected ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</optgroup>'; });
+  return h;
+}
 function settingsHtml() {
   const seg = (a, v, t, on) => '<button data-a="' + a + '" data-v="' + v + '" class="' + (on ? 'on' : '') + '">' + t + '</button>';
-  let h = '<div class="hd"><b>Settings</b></div>';
-  h += '<div class="sec" style="margin-top:4px">Import</div>';
-  h += '<button class="btn" data-a="impstart" style="margin-top:6px">Import rota file</button>';
-  h += '<div class="k" style="margin-top:6px">Choose the rota as a PDF or an xlsx spreadsheet. You check it before anything is saved.</div>';
-  h += '<div class="strow"><label for="setName">Your name on the rota</label><input class="fld wide" id="setName" type="text" value="' + esc(SET.name) + '" autocomplete="off" autocapitalize="words"></div>';
-  h += '<div class="sec">Backup</div><div class="acts" style="margin-top:6px"><button data-a="export">Export backup</button><button data-a="bkimport">Import backup</button></div>';
+  const hasTeam = TEAM.groups.length > 0, open = (id) => (S.card === id ? ' open' : '');
+  const showingName = viewingOther() ? SET.showing : 'me';
+  let h = '<div class="stitle">Settings</div>';
+  // Import, with backup tucked behind the arrow
+  h += '<div class="herocard' + open('backup') + '" data-card="backup"><div class="herorow">';
+  h += '<button class="hmain" data-a="impstart"><span class="hic"><svg viewBox="0 0 24 24">' + SICON.imp + '</svg></span><span><b>Import rota file</b><small>' + (SET.lastImport ? 'Last: ' + esc(SET.lastImport.file) + ' · ' + shortDate(SET.lastImport.at) : 'PDF or xlsx. You check it before anything is saved.') + '</small></span></button>';
+  h += '<button class="hchev" data-a="card" data-v="backup" aria-expanded="' + (S.card === 'backup') + '" aria-label="Backup options"><span class="chev">▾</span></button></div>';
+  h += '<div class="cb"><div><div class="hinner"><div class="hk">Backup · ' + (SET.lastBackup ? 'last saved ' + shortDate(SET.lastBackup) : 'not saved yet') + '</div><div class="hbtns"><button data-a="export">Export backup</button><button data-a="bkimport">Import backup</button></div><div class="hk" style="margin-top:6px">Saves everything to a file you can keep in Files or iCloud.</div></div></div></div></div>';
   if (!canSave) h += '<div class="wbar">This browser is not letting Rotapp save. Export a backup now and then to be safe.</div>';
-  h += '<div class="sec">Holiday</div>';
-  h += '<div class="strow"><label for="setAllow">Yearly allowance (days)</label><input class="fld" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (SET.allow == null ? '' : SET.allow) + '" placeholder="Not set"></div>';
-  h += '<div class="strow"><label for="setCarry">Carried over <span class="k">(max 2)</span></label><input class="fld" id="setCarry" type="number" inputmode="numeric" min="0" max="2" value="' + SET.carry + '"></div>';
-  h += '<div class="sec">Appearance</div>';
-  h += '<div class="strow"><span>Day style</span><span class="seg">' + seg('style', 'A', 'Filled', SET.style === 'A') + seg('style', 'B', 'Badge', SET.style === 'B') + seg('style', 'C', 'Dot', SET.style === 'C') + '</span></div>';
-  h += '<div class="strow"><span>Theme</span><span class="seg">' + seg('themeset', 'auto', 'Auto', SET.theme === 'auto') + seg('themeset', 'light', 'Light', SET.theme === 'light') + seg('themeset', 'dark', 'Dark', SET.theme === 'dark') + '</span></div>';
-  h += '<div class="sec">Week</div>';
-  h += '<div class="strow"><span>Week view</span><span class="seg">' + seg('wmode', 'cal', 'Mon – Sun', SET.wmode === 'cal') + seg('wmode', 'roll', 'Next 7 days', SET.wmode === 'roll') + '</span></div>';
+  const card = (id, title, sum, body) => '<div class="scard' + open(id) + '" data-card="' + id + '"><button class="ch" data-a="card" data-v="' + id + '" aria-expanded="' + (S.card === id) + '"><span class="sic" style="background:' + SICON[id][0] + '"><svg viewBox="0 0 24 24">' + SICON[id][1] + '</svg></span><span class="t"><b>' + title + '</b><small>' + sum + '</small></span><span class="chev">▾</span></button><div class="cb"><div><div class="inner">' + body + '</div></div></div></div>';
+  // Rota
+  let rb = '';
+  if (hasTeam) {
+    rb += '<div class="it"><label for="setShow">Showing</label><select class="sel" id="setShow">' + personOptions(viewingOther() ? SET.showing : '', true) + '</select></div>';
+    rb += '<div class="it col"><span>Groups in the swap list</span><div class="ticks">' + TEAM.groups.map(([g]) => '<label><input type="checkbox" data-g="' + esc(g) + '"' + (SET.swapGroups.includes(g) ? ' checked' : '') + '> ' + esc(g) + '</label>').join('') + '</div></div>';
+  } else rb += '<div class="it col"><span class="k">Import a rota to see your team here.</span></div>';
+  rb += '<div class="it"><span>Week view</span><span class="seg">' + seg('wmode', 'cal', 'Mon – Sun', SET.wmode === 'cal') + seg('wmode', 'roll', 'Next 7 days', SET.wmode === 'roll') + '</span></div>';
+  if (hasTeam && latestNames().includes(SET.name)) rb += '<div class="it"><label for="setMe">This is me</label><select class="sel" id="setMe">' + personOptions(SET.name, false) + '</select></div>';
+  else rb += '<div class="it"><label for="setName">This is me</label><input class="fld wide" id="setName" type="text" value="' + esc(SET.name) + '" autocomplete="off" autocapitalize="words"></div>';
+  rb += '<div class="it col"><span class="k">"This is me" is your row on the rota. Only change it if your name is written differently.</span></div>';
+  h += card('rota', 'Rota', 'Showing ' + esc(showingName) + ' · ' + (SET.wmode === 'cal' ? 'Mon – Sun' : 'Next 7 days'), rb);
+  // Appearance
+  const sty = { A: 'Filled', B: 'Badge', C: 'Dot' }, th = { auto: 'Auto', light: 'Light', dark: 'Dark' };
+  let ab = '<div class="it"><span>Day style</span><span class="seg">' + seg('style', 'A', 'Filled', SET.style === 'A') + seg('style', 'B', 'Badge', SET.style === 'B') + seg('style', 'C', 'Dot', SET.style === 'C') + '</span></div>';
+  ab += '<div class="it"><span>Theme</span><span class="seg">' + seg('themeset', 'auto', 'Auto', SET.theme === 'auto') + seg('themeset', 'light', 'Light', SET.theme === 'light') + seg('themeset', 'dark', 'Dark', SET.theme === 'dark') + '</span></div>';
+  h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme], ab);
   h += '<div class="foot">Rotapp ' + VERSION + '</div>';
   return h;
+}
+// Open or close a Settings card in place, so the slide plays; only one is open at a time.
+function toggleCard(id) {
+  S.card = S.card === id ? null : id;
+  document.querySelectorAll('[data-card]').forEach((c) => {
+    const on = c.dataset.card === S.card;
+    c.classList.toggle('open', on);
+    const b = c.querySelector('[data-a="card"]'); if (b) b.setAttribute('aria-expanded', String(on));
+  });
 }
 
 // ---------- day editor (bottom sheet on phones, side panel on wide screens) ----------
@@ -250,8 +301,81 @@ function dayEditorInner() {
   COMMON.forEach((x) => { h += tile(x); });
   if (S.more) MORE.forEach((x) => { h += tile(x); });
   h += '</div><button class="mrow" data-a="more">' + (S.more ? 'Fewer types ▴' : 'More types ▾') + '</button>';
+  const why = swapBlocked(S.sheet);
+  h += why ? '<button class="swapbtn" disabled>⇄ Swap with someone</button><div class="k" style="text-align:center;margin-top:4px">' + why + '</div>' : '<button class="swapbtn" data-a="swap">⇄ Swap with someone</button>';
   h += '<div class="acts"><button data-a="cancel">Cancel</button><button class="p" data-a="done">Done</button></div>';
   return h;
+}
+
+// ---------- swap shifts: one day each side, both people exchange shifts on each day involved ----------
+const monthIndex = (k) => { const d = pk(k), t = today(); return (d.getFullYear() - t.getFullYear()) * 12 + d.getMonth() - t.getMonth(); };
+function swapBlocked(k) {
+  if (!TEAM.groups.length) return 'Import a rota to swap with someone.';
+  const mi = monthIndex(k);
+  if (mi !== 0 && mi !== 1) { const t = today(); return 'Swaps are only for ' + MF[t.getMonth()] + ' and ' + MF[(t.getMonth() + 1) % 12] + '.'; }
+  if (!D[k]) return 'This day has no shift to swap.';
+  return '';
+}
+const chip = (c) => (c ? '<span class="chip" style="background:' + T[c].bg + ';color:' + T[c].fg + '">' + T[c].sm + '</span>' : '<span class="chip" style="background:var(--surface2);color:var(--muted)">–</span>');
+const longDate = (k) => { const d = pk(k); return DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()]; };
+const firstName = (n) => n.split(' ')[0];
+function swapMonth(name, y, m) {
+  const W = S.swap, pd = TEAM.people[name].d, f = new Date(y, m, 1), off = (f.getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
+  let h = '<div class="mh">' + MF[m] + '</div><div class="g">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('');
+  for (let i = 0; i < off; i++) h += '<div></div>';
+  for (let n = 1; n <= dim; n++) {
+    const k = y + '-' + p2(m + 1) + '-' + p2(n), c = pd[k], t = c ? T[c] : null;
+    const cls = (W.their === k ? ' sel' : '') + (W.day === k ? ' mine' : '');
+    h += t ? '<button class="c sm' + cls + '" data-a="sday" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></button>'
+      : '<button class="c sm' + cls + '" disabled style="background:var(--surface2);color:var(--muted)"><span>' + n + '</span></button>';
+  }
+  return h + '</div>';
+}
+function swapInner() {
+  const W = S.swap, k = W.day, mine = D[k];
+  let h = '';
+  if (W.step === 'who') {
+    h += '<div class="stp">Step 1 of 3</div><h3 class="sh">Swap ' + longDate(k) + '</h3><div class="k">You: ' + T[mine].n + '. Pick who you are swapping with. Their shift on ' + shortDate(k) + ' is shown.</div>';
+    const groups = othersIn(TEAM.groups).filter(([g]) => SET.swapGroups.includes(g));
+    if (!groups.length) h += '<div class="k" style="padding:12px 0">No groups are ticked for swaps. Choose them in Settings → Rota.</div>';
+    groups.forEach(([g, ns]) => {
+      h += '<div class="grp">' + esc(g) + '</div>';
+      ns.forEach((n) => { const c = TEAM.people[n] && TEAM.people[n].d[k]; h += '<button class="prow' + (c === mine ? ' same' : '') + '" data-a="swho" data-v="' + esc(n) + '"><span>' + esc(n) + '</span>' + chip(c) + '</button>'; });
+    });
+    h += '<div class="acts"><button data-a="sback" data-v="edit">Back</button></div>';
+  } else if (W.step === 'their') {
+    const t = today(), nx = new Date(t.getFullYear(), t.getMonth() + 1, 1);
+    h += '<div class="stp">Step 2 of 3</div><h3 class="sh">Which of ' + esc(firstName(W.who)) + '\'s days?</h3><div class="k">It starts on the same day. Tap a different day to swap across days. Your day has a dashed outline.</div>';
+    h += swapMonth(W.who, t.getFullYear(), t.getMonth());
+    if (W.more) h += swapMonth(W.who, nx.getFullYear(), nx.getMonth());
+    h += '<button class="mrow" data-a="smore">' + (W.more ? 'Hide ' + MF[nx.getMonth()] + ' ▴' : 'Show ' + MF[nx.getMonth()] + ' ▾') + '</button>';
+    const tc = TEAM.people[W.who].d[W.their];
+    h += '<div class="k" style="margin-top:8px">Selected: <b>' + longDate(W.their) + '</b> · ' + esc(firstName(W.who)) + ' on ' + (tc ? T[tc].n : 'no shift') + '</div>';
+    h += '<div class="acts"><button data-a="sback" data-v="who">Back</button><button class="p" data-a="snext"' + (tc ? '' : ' disabled') + '>Next</button></div>';
+  } else {
+    const days = W.their === k ? [k] : [k, W.their].sort();
+    h += '<div class="stp">Step 3 of 3</div><h3 class="sh">Check the swap</h3><div class="k">You and ' + esc(firstName(W.who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>';
+    days.forEach((x) => {
+      const a = D[x], b = TEAM.people[W.who].d[x];
+      h += '<div class="cmp"><div class="d">' + longDate(x) + '</div><div class="r"><span>You</span><span>' + chip(a) + ' → ' + chip(b) + '</span></div><div class="r"><span>' + esc(W.who) + '</span><span>' + chip(b) + ' → ' + chip(a) + '</span></div></div>';
+    });
+    if (days.every((x) => D[x] === TEAM.people[W.who].d[x])) h += '<div class="k" style="margin-top:8px">Nothing would change: you are on the same shift.</div>';
+    h += '<div class="acts"><button data-a="sback" data-v="their">Back</button><button class="p" data-a="sconfirm">Confirm swap</button></div>';
+  }
+  return h;
+}
+function applySwap() {
+  const W = S.swap, other = TEAM.people[W.who].d;
+  const days = W.their === W.day ? [W.day] : [W.day, W.their];
+  days.forEach((x) => {
+    const a = D[x], b = other[x];
+    if (b) D[x] = b; else delete D[x];
+    if (a) other[x] = a; else delete other[x];
+  });
+  save();
+  const who = W.who;
+  S.swap = null; S.sheet = null;
+  toast('Swapped with ' + who);
 }
 function runSheetInner() {
   const r = S.runSheet;
@@ -261,6 +385,17 @@ function runSheetInner() {
 }
 
 // ---------- import ----------
+function miniGridFor(M, name) {
+  const f = new Date(M.y, M.m, 1), off = (f.getDay() + 6) % 7, p = M.team.people[name], dim = new Date(M.y, M.m + 1, 0).getDate();
+  let h = '<div class="g" style="margin-top:8px">';
+  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((x) => { h += '<div class="w">' + x + '</div>'; });
+  for (let i = 0; i < off; i++) h += '<div></div>';
+  for (let n = 1; n <= dim; n++) {
+    const c = p && p.d[n], t = c ? T[c] : null;
+    h += t ? '<div class="c" style="height:38px;background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></div>' : '<div class="c" style="height:38px;background:var(--surface2);color:var(--muted)"><span>' + n + '</span></div>';
+  }
+  return h + '</div>';
+}
 function miniGrid(M) {
   const f = new Date(M.y, M.m, 1), off = (f.getDay() + 6) % 7;
   let h = '<div class="g" style="margin-top:8px">';
@@ -291,12 +426,19 @@ function impHtml() {
     return h;
   }
   let h = dim + '<div class="modal" role="dialog" aria-label="Check the import"><h3>Check the import</h3>';
-  h += '<div class="obar">Read ' + esc(I.matched) + '\'s row from ' + esc(I.name) + '.</div>';
+  h += '<div class="obar">Read ' + esc(I.matched) + '\'s row' + (I.count ? ' and ' + I.count + ' other ' + (I.count === 1 ? 'person' : 'people') : '') + ' from ' + esc(I.name) + '.</div>';
+  if (I.groups.length) {
+    let o = '<option value="">' + esc(I.matched) + ' (me)</option>';
+    I.groups.forEach(([g, ns]) => { o += '<optgroup label="' + esc(g) + '">' + ns.map((n) => '<option' + (n === I.showing ? ' selected' : '') + '>' + esc(n) + '</option>').join('') + '</optgroup>'; });
+    h += '<div class="vrow"><label class="k" for="impShow">Showing</label><select class="sel" id="impShow">' + o + '</select></div>';
+  }
+  const other = I.showing;
   (I.warnings || []).forEach((w) => { h += '<div class="wbar">' + esc(w) + '</div>'; });
   const multi = I.months.length > 1;
   I.months.forEach((M, mi) => {
     h += '<div class="pm">';
     h += multi ? '<label><input type="checkbox" data-a="imptick" data-v="' + mi + '"' + (M.on ? ' checked' : '') + '> ' + MF[M.m] + ' ' + M.y + '</label>' : '<b>' + MF[M.m] + ' ' + M.y + '</b>';
+    if (other) { h += (M.team.people[other] ? miniGridFor(M, other) : '<div class="k" style="margin-top:6px">' + esc(other) + ' isn\'t on this month\'s rota.</div>') + '</div>'; return; }
     h += '<div class="k" style="margin-top:4px">Read ' + M.days.length + ' days' + (M.blanks.length ? ' · ' + M.blanks.length + ' blank ' + (M.blanks.length === 1 ? 'day' : 'days') + ' treated as Off' : '') + '</div>';
     if (M.doubt) h += '<div class="wbar">' + M.doubt + (M.doubt === 1 ? ' day needs' : ' days need') + ' a look: code not recognised, shown as Off with a dashed outline.</div>';
     M.warnings.forEach((w) => { h += '<div class="wbar">' + esc(w) + '</div>'; });
@@ -318,6 +460,15 @@ function impHtml() {
   h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impdone">' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + '</button></div></div>';
   return h;
 }
+// Office groups across the months of one import, latest month's order first; you are left out.
+function mergeGroups(months) {
+  const out = [];
+  [...months].reverse().forEach((M) => M.team.groups.forEach(([g, ns]) => {
+    let row = out.find((x) => x[0] === g); if (!row) { row = [g, []]; out.push(row); }
+    ns.forEach((n) => { if (!M.team.people[n].me && !row[1].includes(n)) row[1].push(n); });
+  }));
+  return out.filter((g) => g[1].length);
+}
 function buildPreview(res, I) {
   const months = res.months.map((m) => {
     const exists = hasMonth(m.year, m.month), list = [], chg = {};
@@ -328,9 +479,10 @@ function buildPreview(res, I) {
         if (old !== nw) { list.push({ n: d.n, o: old || 'O', nw }); chg[d.n] = true; }
       }
     });
-    return { y: m.year, m: m.month, days: m.days, blanks: m.blanks, doubt: m.unknown.length, warnings: m.warnings || [], exists, list, chg, open: false, on: true };
+    return { y: m.year, m: m.month, days: m.days, blanks: m.blanks, doubt: m.unknown.length, warnings: m.warnings || [], exists, list, chg, open: false, on: true, team: m.team || { groups: [], people: {} } };
   });
-  S.imp = { step: 'preview', name: I.name, bytes: I.bytes, matched: res.months[0].matched, warnings: res.warnings || [], months };
+  const groups = mergeGroups(months), count = groups.reduce((a, g) => a + g[1].length, 0);
+  S.imp = { step: 'preview', name: I.name, bytes: I.bytes, matched: res.months[0].matched, warnings: res.warnings || [], months, groups, count, showing: '' };
 }
 async function ensureJSZip() {
   if (window.JSZip) return;
@@ -375,7 +527,24 @@ function applyImport() {
     Object.keys(D).forEach((k) => { if (k.startsWith(pre)) delete D[k]; });
     M.days.forEach((d) => { D[pre + p2(d.n)] = d.code === '?' ? 'O' : d.code; });
     if (M.exists) replaced++; else added++;
+    // Everyone else: replace their month too.
+    for (const [name, p] of Object.entries(M.team.people)) {
+      if (p.me) continue;
+      const tp = TEAM.people[name] || (TEAM.people[name] = { g: p.g, d: {} });
+      tp.g = p.g;
+      Object.keys(tp.d).forEach((k) => { if (k.startsWith(pre)) delete tp.d[k]; });
+      for (const [n, c] of Object.entries(p.d)) tp.d[pre + p2(+n)] = c;
+    }
   });
+  // The people list follows the most recent import.
+  const meGroup = on.map((M) => Object.values(M.team.people).find((p) => p.me)).find(Boolean);
+  const groups = mergeGroups(on);
+  if (meGroup) { let g = groups.find((x) => x[0] === meGroup.g); if (!g) { g = [meGroup.g, []]; groups.unshift(g); } }
+  // Keep your own name in the list so "This is me" can show it.
+  if (meGroup) { const g = groups.find((x) => x[0] === meGroup.g); const idx = on[on.length - 1].team.groups.find((x) => x[0] === meGroup.g); const order = idx ? idx[1] : []; if (!g[1].includes(SET.name)) { g[1].push(SET.name); g[1].sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999)); } }
+  TEAM.groups = groups;
+  SET.lastImport = { file: I.name, at: ymd(today()) };
+  tidyShowing();
   save();
   const first = on[0];
   S.imp = null;
@@ -388,7 +557,8 @@ function applyImport() {
 // ---------- backup ----------
 function exportBackup() {
   try {
-    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 1, days: D, set: SET })], { type: 'application/json' });
+    SET.lastBackup = ymd(today()); save();
+    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 2, days: D, set: SET, team: TEAM })], { type: 'application/json' });
     const a = document.createElement('a'), url = URL.createObjectURL(blob);
     a.href = url; a.download = 'rotapp-backup-' + ymd(today()) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -411,7 +581,21 @@ function restoreBackup(text) {
       if (['A', 'B', 'C'].includes(s.style)) SET.style = s.style;
       if (['auto', 'light', 'dark'].includes(s.theme)) SET.theme = s.theme;
       if (['cal', 'roll'].includes(s.wmode)) SET.wmode = s.wmode;
+      if (Array.isArray(s.swapGroups)) SET.swapGroups = s.swapGroups.filter((g) => typeof g === 'string');
+      SET.showing = typeof s.showing === 'string' ? s.showing : null;
+      if (s.lastImport && typeof s.lastImport.file === 'string') SET.lastImport = s.lastImport;
+      if (typeof s.lastBackup === 'string') SET.lastBackup = s.lastBackup;
     }
+    TEAM = { people: {}, groups: [] };
+    if (d.team && typeof d.team.people === 'object' && d.team.people) {
+      for (const [n, p] of Object.entries(d.team.people)) {
+        if (!p || typeof p.d !== 'object') continue;
+        const dd = {}; for (const [k, v] of Object.entries(p.d)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && T[v]) dd[k] = v;
+        TEAM.people[n] = { g: String(p.g || 'Other'), d: dd };
+      }
+      if (Array.isArray(d.team.groups)) TEAM.groups = d.team.groups.filter((g) => Array.isArray(g) && Array.isArray(g[1])).map((g) => [String(g[0]), g[1].map(String)]);
+    }
+    tidyShowing();
     save();
     toast('Backup restored');
   } catch (err) { toast("That isn't a Rotapp backup"); }
@@ -427,6 +611,7 @@ function pagedHtml(kind) {
   let h = '<div class="hd"><span class="side"><button class="arr" data-a="prev" aria-label="Previous ' + kind + '">‹</button>' + refreshBtn(o) + '</span>';
   h += '<div class="reel" aria-live="polite">' + [-1, 0, 1].map((s) => '<span class="rt"' + (s ? ' aria-hidden="true"' : '') + ' data-s="' + s + '">' + P.title(o + s) + '</span>').join('') + '</div>';
   h += '<span class="side r"><button class="arr" data-a="next" aria-label="Next ' + kind + '">›</button></span></div>';
+  if (viewingOther()) h += '<div class="vpill"><span>' + esc(SET.showing) + ' · view only</span></div>';
   if (kind === 'week') h += '<div class="mid"><span class="seg"><button data-a="wmode" data-v="cal" class="' + (SET.wmode === 'cal' ? 'on' : '') + '">Mon – Sun</button><button data-a="wmode" data-v="roll" class="' + (SET.wmode === 'roll' ? 'on' : '') + '">Next 7 days</button></span></div>';
   else h += '<div class="g wd">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('') + '</div>';
   h += '<div class="swv"><div class="trk">' + [o - 1, o, o + 1].map((x) => '<div class="pg"' + (x === o ? '' : ' aria-hidden="true" inert') + '>' + P.body(x) + '</div>').join('') + '</div></div>';
@@ -443,15 +628,16 @@ function render() {
   document.documentElement.setAttribute('data-theme', SET.theme);
   scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
   bindTrack();
+  main.classList.toggle('grouped', t === 'settings');
   main.scrollTop = top;
   const wide = isWide(), panel = document.getElementById('panel');
   let ov = '', pnl = '';
   const editing = S.sheet != null, runOpen = S.runSheet != null;
   if (wide) {
-    if (editing) pnl = '<button class="lnk" data-a="cancel" style="text-align:right;margin:0 0 8px">Close ✕</button>' + dayEditorInner();
+    if (editing) pnl = '<button class="lnk" data-a="cancel" style="text-align:right;margin:0 0 8px">Close ✕</button>' + (S.swap ? swapInner() : dayEditorInner());
     else if (runOpen) pnl = '<button class="lnk" data-a="runclose" style="text-align:right;margin:0 0 8px">Close ✕</button>' + runSheetInner();
   } else {
-    if (editing) ov += '<div class="dim" data-a="cancel"></div><div class="sheet"><div class="grab"></div>' + dayEditorInner() + '</div>';
+    if (editing) ov += '<div class="dim" data-a="cancel"></div><div class="sheet"><div class="grab"></div>' + (S.swap ? swapInner() : dayEditorInner()) + '</div>';
     else if (runOpen) ov += '<div class="dim" data-a="runclose"></div><div class="sheet"><div class="grab"></div>' + runSheetInner() + '</div>';
   }
   panel.innerHTML = pnl;
@@ -473,7 +659,8 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-a]');
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
-  if (a === 'tab') { S.tab = v; S.sheet = null; S.runSheet = null; S.imp = null; S.add = null; }
+  if (a === 'tab') { S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; }
+  else if (a === 'card') { toggleCard(v); return; }
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
@@ -481,11 +668,18 @@ document.addEventListener('click', (e) => {
   else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
   else if (a === 'style') { SET.style = v; save(); }
   else if (a === 'themeset') { SET.theme = v; save(); }
-  else if (a === 'day') { S.sheet = k; S.pick = null; S.more = false; S.runSheet = null; }
+  else if (a === 'day') { if (viewingOther()) return; S.sheet = k; S.pick = null; S.more = false; S.runSheet = null; S.swap = null; }
+  else if (a === 'swap') { if (swapBlocked(S.sheet)) return; S.swap = { step: 'who', day: S.sheet }; }
+  else if (a === 'swho') { if (!TEAM.people[v]) return; S.swap.who = v; S.swap.their = S.swap.day; S.swap.more = monthIndex(S.swap.day) === 1; S.swap.step = 'their'; }
+  else if (a === 'sday') S.swap.their = k;
+  else if (a === 'smore') S.swap.more = !S.swap.more;
+  else if (a === 'snext') S.swap.step = 'confirm';
+  else if (a === 'sback') { if (v === 'edit') S.swap = null; else S.swap.step = v; }
+  else if (a === 'sconfirm') { applySwap(); return; }
   else if (a === 'pick') S.pick = v;
   else if (a === 'more') S.more = !S.more;
   else if (a === 'done') { if (S.pick) { D[S.sheet] = S.pick; save(); } S.sheet = null; }
-  else if (a === 'cancel') S.sheet = null;
+  else if (a === 'cancel') { S.sheet = null; S.swap = null; }
   else if (a === 'past') S.showPast = !S.showPast;
   else if (a === 'add') { S.add = addDefaults(); S.tab = 'add'; }
   else if (a === 'atype') S.add.type = v;
@@ -524,6 +718,10 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.a === 'imptick') { S.imp.months[+t.dataset.v].on = t.checked; render(); return; }
+  if (t.id === 'impShow' && S.imp) { S.imp.showing = t.value; render(); return; }
+  if (t.id === 'setShow') { SET.showing = t.value || null; tidyShowing(); save(); render(); return; }
+  if (t.id === 'setMe') { SET.name = t.value; tidyShowing(); save(); render(); return; }
+  if (t.dataset && t.dataset.g != null) { const g = t.dataset.g; SET.swapGroups = t.checked ? [...new Set([...SET.swapGroups, g])] : SET.swapGroups.filter((x) => x !== g); save(); render(); return; }
   if (t.id === 'aStart' && S.add) { S.add.start = t.value || S.add.start; if (pk(S.add.end) < pk(S.add.start)) S.add.end = S.add.start; render(); }
   else if (t.id === 'aEnd' && S.add) { S.add.end = t.value || S.add.end; render(); }
   else if (t.id === 'setName') { SET.name = t.value.trim() || SET.name; save(); render(); }
@@ -651,4 +849,4 @@ load();
 render();
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best effort */ }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-window.__rotapp = { get data() { return D; }, get settings() { return SET; } };
+window.__rotapp = { get data() { return D; }, get settings() { return SET; }, get team() { return TEAM; } };

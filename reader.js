@@ -36,6 +36,39 @@ export async function readRotaPdf(pdfjs, data, opts) {
   return parseRota(pages, opts);
 }
 
+// Sorting the name column into office headings, people and rows to ignore.
+const KNOWN_GROUPS = ['account managers'];
+export function classifyLabel(label) {
+  const t = label.replace(/\s+/g, ' ').trim(), low = t.toLowerCase();
+  if (!t) return 'skip';
+  if (/^(shifts|key|legend)$/i.test(t)) return 'stop';
+  if (/^(total\b|name$)/i.test(t) || /speakers/i.test(t)) return 'skip';
+  if (t.length <= 3 && CODE[t.toUpperCase()]) return 'stop';
+  if (KNOWN_GROUPS.includes(low)) return 'group';
+  if (/[A-Z]{2}/.test(t) && t === t.toUpperCase()) return 'group';
+  return 'person';
+}
+export const groupName = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()).replace(/\bUs\b/, 'US').replace(/\bPd\b/, 'PD');
+export const codeOf = (v) => (v == null || String(v).trim() === '' ? 'O' : (CODE[String(v).toUpperCase().replace(/[^A-Z]/g, '')] || 'O'));
+// Collects every person row under its office heading. Returns { groups: [[group, [names]]], people: { name: { g, d: { day: code }, me } } }.
+export function collectTeam(rowsInOrder, isMe) {
+  const groups = [], people = {};
+  let cur = null;
+  for (const row of rowsInOrder) {
+    const name = row.label.replace(/\s+/g, ' ').trim();
+    const kind = classifyLabel(name);
+    if (kind === 'stop') break;
+    if (kind === 'skip') continue;
+    if (kind === 'group') { cur = groupName(name); if (!groups.find((g) => g[0] === cur)) groups.push([cur, []]); continue; }
+    if (!cur) { cur = 'Other'; if (!groups.find((g) => g[0] === cur)) groups.push([cur, []]); }
+    const g = groups.find((x) => x[0] === cur);
+    if (people[name]) continue;
+    g[1].push(name);
+    people[name] = { g: cur, d: row.days(), me: isMe(row) };
+  }
+  return { groups: groups.filter((g) => g[1].length), people };
+}
+
 export const norm = (s) => s.toLowerCase().replace(/[^a-z0-9À-ɏ ]/g, ' ').replace(/\s+/g, ' ').trim();
 const median = (a) => { const b = [...a].sort((x, y) => x - y); return b[Math.floor(b.length / 2)]; };
 
@@ -164,8 +197,29 @@ function parsePage(page, opts) {
     const code = CODE[up];
     return code ? { n: col.n, wd: col.wd, raw: rawText, code } : { n: col.n, wd: col.wd, raw: rawText, code: '?', unknown: true };
   });
+  // Everyone else on the page, for the team view.
+  const placeRow = (top) => {
+    const out = {};
+    for (const it of page.items) {
+      if (Math.abs(it.top - top) > 2.5 || it.x + it.w / 2 < labelEdge) continue;
+      const toks = it.s.split(' '), len = it.s.length;
+      let off = 0;
+      for (const t of toks) {
+        const cx = toks.length === 1 ? it.x + it.w / 2 : it.x + it.w * ((off + t.length / 2) / len);
+        off += t.length + 1;
+        let best = 0, bd = Infinity;
+        cols.forEach((col, i) => { const d = Math.abs(col.cx - cx); if (d < bd) { bd = d; best = i; } });
+        if (bd <= pitch * 0.45 && out[cols[best].n] == null) out[cols[best].n] = codeOf(t);
+      }
+    }
+    cols.forEach((c) => { if (out[c.n] == null) out[c.n] = 'O'; });
+    return out;
+  };
+  const labelRows = [...labelItems].sort((a, b) => a.top - b.top).map((it) => ({ label: it.s, top: it.top, days: () => placeRow(it.top) }));
+  const team = collectTeam(labelRows, (r) => Math.abs(r.top - rowTop) <= 1);
+
   return {
-    page: page.n, month, year, daysInMonth: dim, days, matched, warnings,
+    page: page.n, month, year, daysInMonth: dim, days, matched, warnings, team,
     blanks: days.filter((d) => d.blank).map((d) => d.n),
     unknown: days.filter((d) => d.unknown).map((d) => ({ n: d.n, raw: d.raw })),
   };
