@@ -1,21 +1,22 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.5 prototype';
+const VERSION = '0.6 prototype';
 const KEY = 'rotapp.v1';
 
+// UI v2.0 (Dark-first) shift colours
 const T = {
-  M: { n: 'M shift', sm: 'M', bg: '#00B050', fg: '#000' },
-  L: { n: 'L shift', sm: 'L', bg: '#4472C4', fg: '#fff' },
+  M: { n: 'M shift', sm: 'M', bg: '#2FB866', fg: '#06150B' },
+  L: { n: 'L shift', sm: 'L', bg: '#4C7DFF', fg: '#fff' },
   O: { n: 'Off', sm: 'Off', bg: 'var(--off)', fg: 'var(--offt)' },
-  H: { n: 'Holiday', sm: 'H', bg: '#FFE24D', fg: '#000' },
-  C: { n: 'C', sm: 'C', bg: '#F3DDB0', fg: '#000' },
-  S: { n: 'Sick', sm: 'Sick', bg: '#F4A6C0', fg: '#000' },
-  X: { n: 'Other', sm: 'Oth', bg: '#8B5E3C', fg: '#fff' },
-  MA: { n: 'MA', sm: 'MA', bg: '#ED7D31', fg: '#000' },
-  LA: { n: 'LA', sm: 'LA', bg: '#5B9BD5', fg: '#000' },
-  E: { n: 'E', sm: 'E', bg: '#E03131', fg: '#fff' },
-  P: { n: 'PH', sm: 'PH', bg: '#7030A0', fg: '#fff' },
+  H: { n: 'Holiday', sm: 'H', bg: '#FFD43B', fg: '#1a1400' },
+  C: { n: 'C', sm: 'C', bg: '#D9BC8C', fg: '#1a1208' },
+  S: { n: 'Sick', sm: 'Sick', bg: '#FF7AA8', fg: '#1a0710' },
+  X: { n: 'Other', sm: 'Oth', bg: '#A8724A', fg: '#fff' },
+  MA: { n: 'MA', sm: 'MA', bg: '#FF8A3D', fg: '#1a0b00' },
+  LA: { n: 'LA', sm: 'LA', bg: '#6FB3FF', fg: '#06121f' },
+  E: { n: 'E', sm: 'E', bg: '#FF5A5A', fg: '#fff' },
+  P: { n: 'PH', sm: 'PH', bg: '#9B5CFF', fg: '#fff' },
 };
 const COMMON = ['M', 'L', 'O', 'H', 'C', 'S'];
 const MORE = ['X', 'MA', 'LA', 'E', 'P'];
@@ -26,7 +27,7 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true };
 // Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
 let TEAM = { people: {}, groups: [] };
 let canSave = true;
@@ -39,6 +40,9 @@ function load() {
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
     if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [] };
+    // 0.5 kept one allowance; from 0.6 each year has its own.
+    if (!SET.years || typeof SET.years !== 'object') SET.years = {};
+    if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry || 0 };
     tidyShowing();
   } catch (e) { canSave = false; }
 }
@@ -85,7 +89,23 @@ function toast(msg) {
 }
 
 // ---------- leave maths ----------
-const leaveYear = () => today().getFullYear();
+const curYear = () => today().getFullYear();
+const leaveYear = () => S.lyear || curYear();
+const allowFor = (y) => (SET.years && SET.years[y]) || null;
+// A new year starts with last year's allowance copied in (carry-over is typed in by hand).
+function ensureYear() {
+  const y = curYear();
+  if (SET.years[y]) return;
+  const prev = Object.keys(SET.years).map(Number).filter((x) => x < y).sort((a, b) => b - a)[0];
+  if (prev != null && SET.years[prev].allow != null) { SET.years[y] = { allow: SET.years[prev].allow, carry: 0 }; save(); }
+}
+// The first month of the year that has any of your days, if it isn't January.
+function countingFrom(y) {
+  const ms = Object.keys(D).filter((k) => k.startsWith(y + '-')).map((k) => +k.slice(5, 7) - 1);
+  if (!ms.length) return null;
+  const first = Math.min(...ms);
+  return first > 0 ? first : null;
+}
 function countYear(y) {
   const c = { H: 0, C: 0, S: 0, X: 0 };
   for (const [k, v] of Object.entries(D)) if (k.startsWith(y + '-') && c[v] !== undefined) c[v]++;
@@ -166,41 +186,48 @@ function monthSummary(mo) {
   return (nm + nl) ? (nm + nl) + ' shifts · ' + nm + ' M · ' + nl + ' L' : 'No shifts yet';
 }
 function leaveHtml() {
-  const y = leaveYear(), c = countYear(y);
-  let h = '<div class="hd"><b>Leave</b><span class="k">' + y + '</span></div>';
-  if (SET.allow == null) {
-    h += '<div class="k">Holiday used</div><div class="big">' + c.H + ' <span class="k">days</span></div>';
-    h += '<div class="k" style="padding:4px 0 8px">Set your yearly allowance at the bottom of this page.</div>';
+  const y = leaveYear(), cy = curYear(), isCur = y === cy, c = countYear(y), A = allowFor(y);
+  let h = '<div class="hd lhd"><b>Leave</b><button class="yr" data-a="yr" aria-haspopup="true" aria-expanded="' + !!S.ymenu + '">' + y + '</button>';
+  if (S.ymenu) { const other = isCur ? cy - 1 : cy; h += '<div class="ymenu"><button data-a="pickyear" data-v="' + other + '">' + other + '</button></div>'; }
+  h += '</div>';
+  const from = countingFrom(y);
+  if (!A || A.allow == null) {
+    if (isCur) {
+      h += '<div class="kr"><span class="k">Holiday used</span>' + (from != null ? '<span class="note">Counting from ' + MF[from] + '</span>' : '') + '</div><div class="big">' + c.H + ' <span class="k">days</span></div>';
+      h += '<div class="note" style="padding:4px 0 8px">Set your allowance in Settings → Leave.</div>';
+    } else {
+      h += '<div class="k">Holiday</div><div class="big">' + (c.H ? c.H + ' <span class="k">days used</span>' : 'No data') + '</div>';
+      if (!c.H) h += '<div class="note" style="margin-top:4px">Rotapp has no leave recorded for ' + y + '.</div>';
+    }
   } else {
-    const tot = SET.allow + SET.carry, rem = tot - c.H;
-    h += '<div class="k">Holiday remaining</div><div class="big">' + rem + ' <span class="k">of ' + tot + ' days</span></div>';
+    const tot = A.allow + A.carry, rem = tot - c.H;
+    h += '<div class="kr"><span class="k">Holiday remaining</span>' + (from != null ? '<span class="note">Counting from ' + MF[from] + '</span>' : '') + '</div>';
+    h += '<div class="big">' + rem + ' <span class="k">of ' + tot + ' days</span></div>';
     h += '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, Math.round(c.H / (tot || 1) * 100))) + '%"></i></div>';
-    h += '<div class="k" style="margin-bottom:8px">' + SET.allow + ' allowance + ' + SET.carry + ' carried over · ' + c.H + ' used</div>';
+    h += '<div class="k" style="margin-bottom:8px">' + A.allow + ' + ' + A.carry + ' carried over · ' + c.H + ' used</div>';
   }
-  h += '<div class="rw"><span><i class="sw" style="background:' + T.C.bg + '"></i>C</span><b>' + c.C + '</b></div>';
-  h += '<div class="rw"><span><i class="sw" style="background:' + T.S.bg + '"></i>Sick</span><b>' + c.S + '</b></div>';
-  h += '<div class="rw"><span><i class="sw" style="background:' + T.X.bg + '"></i>Other</span><b>' + c.X + '</b></div>';
+  if (SET.showC) h += '<div class="rw"><span><i class="sw" style="background:' + T.C.bg + '"></i>C</span><b>' + c.C + '</b></div>';
+  if (SET.showSick) h += '<div class="rw"><span><i class="sw" style="background:' + T.S.bg + '"></i>Sick</span><b>' + c.S + '</b></div>';
+  if (c.X) h += '<div class="rw"><span><i class="sw" style="background:' + T.X.bg + '"></i>Other</span><b>' + c.X + '</b></div>';
   h += '<div class="sec">Booked leave</div>';
   const t0 = today(), runs = leaveRuns(y);
-  let nShown = 0;
+  const isPast = (r) => !isCur || r.e < t0;
+  let up = 0, past = 0;
   runs.forEach((r, i) => {
-    const past = r.e < t0;
-    if (past && !S.showPast) return;
-    nShown++;
-    h += '<button class="rw" data-a="run" data-v="' + i + '"><span>' + lab(r.s, r.e) + ' · ' + T[r.t].n + (past ? ' <span class="k">(past)</span>' : '') + '</span><b>' + r.n + (r.n === 1 ? ' day' : ' days') + '</b></button>';
+    const p = isPast(r);
+    if (p) past++; else up++;
+    if (p && !S.showPast) return;
+    const label = '<span>' + lab(r.s, r.e) + ' · ' + T[r.t].n + (p ? ' <span class="k">(past)</span>' : '') + '</span><b>' + r.n + (r.n === 1 ? ' day' : ' days') + '</b>';
+    h += isCur ? '<button class="rw" data-a="run" data-v="' + i + '">' + label + '</button>' : '<div class="rw ro">' + label + '</div>';
   });
-  if (!nShown) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
-  h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave') + '</button>';
-  h += '<button class="btn" data-a="add">Add leave</button>';
-  // Holiday settings moved here from Settings (placeholder until the Leave tab is redesigned).
-  h += '<div class="sec">Allowance</div>';
-  h += '<div class="strow"><label for="setAllow">Yearly allowance (days)</label><input class="fld" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (SET.allow == null ? '' : SET.allow) + '" placeholder="Not set"></div>';
-  h += '<div class="strow"><label for="setCarry">Carried over <span class="k">(max 2)</span></label><input class="fld" id="setCarry" type="number" inputmode="numeric" min="0" max="2" value="' + SET.carry + '"></div>';
+  if (!up) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
+  if (past) h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave') + '</button>';
+  if (isCur) h += '<button class="btn" data-a="add">Add leave</button>';
   return h;
 }
 function addDefaults() { const t = today(); return { type: 'H', start: ymd(t), end: ymd(t), edit: null }; }
 function addHtml() {
-  const A = S.add, y = leaveYear(), c = countYear(y);
+  const A = S.add, y = curYear(), c = countYear(y), AY = allowFor(y);
   const a = pk(A.start), b = pk(A.end), bad = b < a;
   const days = bad ? [] : weekdaysIn(a, b), n = days.length;
   let repl = 0;
@@ -227,9 +254,9 @@ function addHtml() {
   else {
     h += '<div class="smry"><b>' + n + (n === 1 ? ' day' : ' days') + ' counted</b> (weekends not counted)<br>';
     if (A.type === 'H') {
-      if (SET.allow == null) h += 'Holiday used ' + usedH + ' → ' + (usedH + n) + '<br><span class="k">Set your allowance in Settings to see what is left.</span>';
+      if (!AY || AY.allow == null) h += 'Holiday used ' + usedH + ' → ' + (usedH + n) + '<br><span class="k">Set your allowance in Settings → Leave to see what is left.</span>';
       else {
-        const rem = SET.allow + SET.carry - usedH;
+        const rem = AY.allow + AY.carry - usedH;
         h += rem + ' remaining → ' + (rem - n);
         if (rem - n < 0) h += '<br><span class="warn">Over your allowance by ' + (n - rem) + (n - rem === 1 ? ' day' : ' days') + '. You can still save.</span>';
       }
@@ -243,6 +270,7 @@ const SICON = {
   imp: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   rota: ['#00A36C', '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>'],
   look: ['#8E5CC9', '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>'],
+  leave: ['#E8A317', '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'],
 };
 const shortDate = (k) => { const d = pk(k); return d.getDate() + ' ' + MN[d.getMonth()]; };
 function personOptions(selected, withMe) {
@@ -280,6 +308,13 @@ function settingsHtml() {
   let ab = '<div class="it"><span>Day style</span><span class="seg">' + seg('style', 'A', 'Filled', SET.style === 'A') + seg('style', 'B', 'Badge', SET.style === 'B') + seg('style', 'C', 'Dot', SET.style === 'C') + '</span></div>';
   ab += '<div class="it"><span>Theme</span><span class="seg">' + seg('themeset', 'auto', 'Auto', SET.theme === 'auto') + seg('themeset', 'light', 'Light', SET.theme === 'light') + seg('themeset', 'dark', 'Dark', SET.theme === 'dark') + '</span></div>';
   h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme], ab);
+  // Leave: this year's allowance, and which counts show on the Leave tab
+  const y = curYear(), A = allowFor(y);
+  let lb = '<div class="it"><label for="setAllow">Holiday allowance (' + y + ')</label><input class="fld num" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (A && A.allow != null ? A.allow : '') + '" placeholder="–"></div>';
+  lb += '<div class="it"><label for="setCarry">Carried over <span class="k">(max 2)</span></label><input class="fld num" id="setCarry" type="number" inputmode="numeric" min="0" max="2" value="' + (A ? A.carry : 0) + '"></div>';
+  lb += '<div class="it col"><span>Show on the Leave tab</span><div class="lticks"><label><input type="checkbox" data-lt="showC"' + (SET.showC ? ' checked' : '') + '> C</label><label><input type="checkbox" data-lt="showSick"' + (SET.showSick ? ' checked' : '') + '> Sick</label></div></div>';
+  lb += '<div class="it col"><span class="k">A new year starts with last year\'s allowance copied in. You can change it here.</span></div>';
+  h += card('leave', 'Leave', (A && A.allow != null ? A.allow + ' + ' + A.carry + ' days · ' + y : 'Allowance not set'), lb);
   h += '<div class="foot">Rotapp ' + VERSION + '</div>';
   return h;
 }
@@ -578,6 +613,10 @@ function restoreBackup(text) {
       if (typeof s.name === 'string') SET.name = s.name;
       SET.allow = typeof s.allow === 'number' ? s.allow : null;
       SET.carry = typeof s.carry === 'number' ? Math.min(2, Math.max(0, s.carry)) : 0;
+      SET.years = {};
+      if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.min(2, Math.max(0, v.carry)) : 0 };
+      if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry };
+      SET.showC = s.showC !== false; SET.showSick = s.showSick !== false;
       if (['A', 'B', 'C'].includes(s.style)) SET.style = s.style;
       if (['auto', 'light', 'dark'].includes(s.theme)) SET.theme = s.theme;
       if (['cal', 'roll'].includes(s.wmode)) SET.wmode = s.wmode;
@@ -626,6 +665,7 @@ function pagedHtml(kind) {
 function render() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
+  const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#131416';
   scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
   bindTrack();
   main.classList.toggle('grouped', t === 'settings');
@@ -657,9 +697,12 @@ function render() {
 document.addEventListener('click', (e) => {
   if (swallowClick) return;
   const el = e.target.closest('[data-a]');
+  if (S.ymenu && (!el || (el.dataset.a !== 'yr' && el.dataset.a !== 'pickyear'))) { S.ymenu = false; render(); if (!el) return; }
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
-  if (a === 'tab') { S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; }
+  if (a === 'tab') { S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
+  else if (a === 'yr') S.ymenu = !S.ymenu;
+  else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; S.runSheet = null; }
   else if (a === 'card') { toggleCard(v); return; }
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
@@ -725,8 +768,9 @@ document.addEventListener('change', (e) => {
   if (t.id === 'aStart' && S.add) { S.add.start = t.value || S.add.start; if (pk(S.add.end) < pk(S.add.start)) S.add.end = S.add.start; render(); }
   else if (t.id === 'aEnd' && S.add) { S.add.end = t.value || S.add.end; render(); }
   else if (t.id === 'setName') { SET.name = t.value.trim() || SET.name; save(); render(); }
-  else if (t.id === 'setAllow') { const n = parseInt(t.value, 10); SET.allow = Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null; save(); render(); }
-  else if (t.id === 'setCarry') { const n = parseInt(t.value, 10); SET.carry = Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0; save(); render(); }
+  else if (t.id === 'setAllow') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null, carry: cur.carry }; save(); render(); }
+  else if (t.id === 'setCarry') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: cur.allow, carry: Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0 }; save(); render(); }
+  else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
 document.getElementById('rotaFile').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
@@ -846,6 +890,7 @@ window.addEventListener('resize', () => { if (TR && !job && !drag) layout(0); })
 
 // ---------- start ----------
 load();
+ensureYear();
 render();
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best effort */ }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
