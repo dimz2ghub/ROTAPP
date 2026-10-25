@@ -1,6 +1,6 @@
 // Rotapp service worker: caches the app so it opens offline.
 // Change CACHE when you upload new files, so phones pick up the update.
-const CACHE = 'rotapp-v6';
+const CACHE = 'rotapp-v7-5';
 const FILES = [
   './', './index.html', './styles.css', './app.js', './reader.js', './xlsx.js',
   './manifest.webmanifest', './icons/icon.svg',

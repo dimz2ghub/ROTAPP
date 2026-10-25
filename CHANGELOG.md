@@ -2,6 +2,19 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.7.5 — 25 Oct 2026
+- People list moved into the Rota card: a "People · N people" row at the bottom of the card opens the list in place (closed by default). The separate People card is gone.
+
+## 0.7 — 25 Oct 2026
+- C days: 1 C day earned for each English bank holiday worked on M, L, MA, LA or E, counted automatically. Leave tab has a C block (left of earned) and a "Bank holidays worked" sheet with a +/− adjust. Unused C days reset each January.
+- Add leave has a C option (works like Sick; warns if C would go below zero, still lets you save).
+- Day editor: Holiday is greyed out on Saturdays and Sundays; warns when a single day takes Holiday over the allowance or C below zero (still lets you save). Shows the shift time in the header.
+- Week cards show the shift time under the letter (M 08:00–16:30, L 15:00–23:30, E 23:00–07:30).
+- New year carry-over is worked out from last year's unused Holiday, capped at 2 (still editable).
+- People list: everyone ever imported stays; a People card in Settings (closed by default, summary only) lets you remove anyone (their shifts are deleted until reimported); names missing from the latest import show "last seen".
+- Import preview has a People section (closed by default) to skip people or whole offices; skipped and removed people start unticked next time; skipping leaves their existing shifts alone.
+- Settings cards open and close with a smooth slide and fade; the version line sits at the bottom of Settings.
+
 ## 0.6 — 25 Oct 2026
 - UI v2.0: Dark-first look, with a light version (mirror of dark); Auto follows the phone. New shift colours and a ring on today.
 - New app icon: shift stripes (green, blue, yellow on dark).

@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.6 prototype';
+const VERSION = '0.7.5 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -19,6 +19,8 @@ const T = {
   P: { n: 'PH', sm: 'PH', bg: '#9B5CFF', fg: '#fff' },
 };
 const COMMON = ['M', 'L', 'O', 'H', 'C', 'S'];
+const TIMES = { M: '08:00–16:30', L: '15:00–23:30', E: '23:00–07:30' };
+const WORKED = { M: 1, L: 1, MA: 1, LA: 1, E: 1 };
 const MORE = ['X', 'MA', 'LA', 'E', 'P'];
 const LEAVE = { H: 1, C: 1, S: 1, X: 1 };
 const MN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -27,9 +29,9 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [] };
 // Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
-let TEAM = { people: {}, groups: [] };
+let TEAM = { people: {}, groups: [], latest: [], seen: {} };
 let canSave = true;
 
 function load() {
@@ -39,7 +41,7 @@ function load() {
     const d = JSON.parse(raw);
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
-    if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [] };
+    if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [], latest: d.team.latest || latestFromGroups(d.team.groups || []), seen: d.team.seen || {} };
     // 0.5 kept one allowance; from 0.6 each year has its own.
     if (!SET.years || typeof SET.years !== 'object') SET.years = {};
     if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry || 0 };
@@ -52,6 +54,7 @@ function save() {
 }
 
 // ---------- team ----------
+const latestFromGroups = (groups) => groups.flatMap((g) => g[1]);
 const latestNames = () => TEAM.groups.flatMap((g) => g[1]);
 const viewingOther = () => !!(SET.showing && SET.showing !== SET.name && TEAM.people[SET.showing]);
 const shown = () => (viewingOther() ? TEAM.people[SET.showing].d : D);
@@ -97,8 +100,37 @@ function ensureYear() {
   const y = curYear();
   if (SET.years[y]) return;
   const prev = Object.keys(SET.years).map(Number).filter((x) => x < y).sort((a, b) => b - a)[0];
-  if (prev != null && SET.years[prev].allow != null) { SET.years[y] = { allow: SET.years[prev].allow, carry: 0 }; save(); }
+  if (prev != null && SET.years[prev].allow != null) {
+    const P = SET.years[prev], unused = P.allow + (P.carry || 0) - countYear(prev).H;
+    SET.years[y] = { allow: P.allow, carry: Math.max(0, Math.min(2, unused)) }; save();
+  }
 }
+// English bank holidays (England and Wales), worked out for any year. One-off extra days are not included.
+function easterSunday(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mo = Math.floor((h + l - 7 * m + 114) / 31), da = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(y, mo - 1, da);
+}
+function bankHolidays(y) {
+  const out = [], add = (d, n) => out.push({ k: ymd(d), n });
+  const firstMon = (m) => { const d = new Date(y, m, 1); return addDays(d, (8 - d.getDay()) % 7); };
+  const lastMon = (m) => { const d = new Date(y, m + 1, 0); return addDays(d, -((d.getDay() + 6) % 7)); };
+  const nyd = new Date(y, 0, 1); add(nyd.getDay() === 6 ? addDays(nyd, 2) : nyd.getDay() === 0 ? addDays(nyd, 1) : nyd, 'New Year’s Day');
+  const es = easterSunday(y); add(addDays(es, -2), 'Good Friday'); add(addDays(es, 1), 'Easter Monday');
+  add(firstMon(4), 'Early May bank holiday'); add(lastMon(4), 'Spring bank holiday'); add(lastMon(7), 'Summer bank holiday');
+  const xm = new Date(y, 11, 25), w = xm.getDay();
+  if (w === 5) { add(xm, 'Christmas Day'); add(new Date(y, 11, 28), 'Boxing Day (substitute)'); }
+  else if (w === 6) { add(new Date(y, 11, 27), 'Christmas Day (substitute)'); add(new Date(y, 11, 28), 'Boxing Day (substitute)'); }
+  else if (w === 0) { add(new Date(y, 11, 26), 'Boxing Day'); add(new Date(y, 11, 27), 'Christmas Day (substitute)'); }
+  else { add(xm, 'Christmas Day'); add(new Date(y, 11, 26), 'Boxing Day'); }
+  return out.sort((a, b) => (a.k < b.k ? -1 : 1));
+}
+// 1 C day for each bank holiday worked on M, L, MA, LA or E; unused C days reset each January.
+const bhWorked = (y) => bankHolidays(y).filter((b) => WORKED[D[b.k]]).map((b) => ({ ...b, s: D[b.k] }));
+const cAdjFor = (y) => (SET.cAdj && SET.cAdj[y]) || 0;
+const cEarned = (y) => bhWorked(y).length + cAdjFor(y);
+const cLeft = (y) => cEarned(y) - countYear(y).C;
 // The first month of the year that has any of your days, if it isn't January.
 function countingFrom(y) {
   const ms = Object.keys(D).filter((k) => k.startsWith(y + '-')).map((k) => +k.slice(5, 7) - 1);
@@ -155,7 +187,7 @@ function weekBody(off) {
     const d = addDays(s, i), k = ymd(d), c = DD[k], tod = k === tk ? ' tod' : '';
     const nm = '<div class="n"><b>' + DN[d.getDay()] + '</b>' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>';
     if (!c) h += '<button class="card empty' + tod + '" data-a="day" data-k="' + k + '">' + nm + '<div class="l">–</div></button>';
-    else { const t = T[c]; h += '<button class="card' + tod + '" data-a="day" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '">' + nm + '<div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div></button>'; }
+    else { const t = T[c]; h += '<button class="card' + tod + '" data-a="day" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '">' + nm + '<div class="r"><div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div>' + (TIMES[c] ? '<div class="tm">' + TIMES[c] + '</div>' : '') + '</div></button>'; }
   }
   return h;
 }
@@ -206,7 +238,13 @@ function leaveHtml() {
     h += '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, Math.round(c.H / (tot || 1) * 100))) + '%"></i></div>';
     h += '<div class="k" style="margin-bottom:8px">' + A.allow + ' + ' + A.carry + ' carried over · ' + c.H + ' used</div>';
   }
-  if (SET.showC) h += '<div class="rw"><span><i class="sw" style="background:' + T.C.bg + '"></i>C</span><b>' + c.C + '</b></div>';
+  if (SET.showC) {
+    const e = cEarned(y), l = e - c.C;
+    h += '<div class="cblock"><div class="k">C days left</div><div class="big">' + l + ' <span class="k">of ' + e + ' earned</span></div>';
+    h += '<div class="bar"><i style="width:' + (e ? Math.max(0, Math.min(100, Math.round(c.C / e * 100))) : 0) + '%;background:' + T.C.bg + '"></i></div>';
+    h += '<div class="k">' + e + ' earned from bank holidays worked · ' + c.C + ' used</div>';
+    h += '<button class="rw" data-a="bhsheet" style="margin-top:8px"><span>Bank holidays worked</span><span class="k">' + bhWorked(y).length + ' ›</span></button></div>';
+  }
   if (SET.showSick) h += '<div class="rw"><span><i class="sw" style="background:' + T.S.bg + '"></i>Sick</span><b>' + c.S + '</b></div>';
   if (c.X) h += '<div class="rw"><span><i class="sw" style="background:' + T.X.bg + '"></i>Other</span><b>' + c.X + '</b></div>';
   h += '<div class="sec">Booked leave</div>';
@@ -236,7 +274,7 @@ function addHtml() {
   let usedH = c.H;
   if (A.edit && A.edit.t === 'H') usedH -= A.edit.n;
   let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="chips">';
-  ['H', 'S'].forEach((x) => { h += '<button class="chp' + (A.type === x ? ' on' : '') + '" data-a="atype" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>'; });
+  ['H', 'S', 'C'].forEach((x) => { h += '<button class="chp' + (A.type === x ? ' on' : '') + '" data-a="atype" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>'; });
   h += '</div><label class="k" for="aStart">Start date</label><input class="fld" id="aStart" type="date" value="' + A.start + '"><label class="k" for="aEnd">End date</label><input class="fld" id="aEnd" type="date" value="' + A.end + '">';
   const f = new Date(a.getFullYear(), a.getMonth(), 1), dim = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
   h += '<div class="k" style="margin-top:6px;text-align:center"><b>' + MF[f.getMonth()] + ' ' + f.getFullYear() + '</b></div><div class="g" style="margin-top:4px">';
@@ -260,6 +298,11 @@ function addHtml() {
         h += rem + ' remaining → ' + (rem - n);
         if (rem - n < 0) h += '<br><span class="warn">Over your allowance by ' + (n - rem) + (n - rem === 1 ? ' day' : ' days') + '. You can still save.</span>';
       }
+    } else if (A.type === 'C') {
+      let l = cLeft(y);
+      if (A.edit && A.edit.t === 'C') l += A.edit.n;
+      h += 'C left ' + l + ' → ' + (l - n);
+      if (l - n < 0) h += '<br><span class="warn">Below zero by ' + (n - l) + (n - l === 1 ? ' day' : ' days') + '. You can still save.</span>';
     } else h += 'Sick days used ' + (c.S) + ' → ' + (c.S + n);
     h += '<br>Replaces ' + repl + ' existing ' + (repl === 1 ? 'day' : 'days') + '</div>';
   }
@@ -270,6 +313,7 @@ const SICON = {
   imp: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
   rota: ['#00A36C', '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>'],
   look: ['#8E5CC9', '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>'],
+  people: ['#5C6B80', '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>'],
   leave: ['#E8A317', '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'],
 };
 const shortDate = (k) => { const d = pk(k); return d.getDate() + ' ' + MN[d.getMonth()]; };
@@ -302,7 +346,11 @@ function settingsHtml() {
   if (hasTeam && latestNames().includes(SET.name)) rb += '<div class="it"><label for="setMe">This is me</label><select class="sel" id="setMe">' + personOptions(SET.name, false) + '</select></div>';
   else rb += '<div class="it"><label for="setName">This is me</label><input class="fld wide" id="setName" type="text" value="' + esc(SET.name) + '" autocomplete="off" autocapitalize="words"></div>';
   rb += '<div class="it col"><span class="k">"This is me" is your row on the rota. Only change it if your name is written differently.</span></div>';
+  // People: a summary row at the bottom of the Rota card that opens the list inside the card.
+  const pb = peopleHtml();
+  if (pb) rb += '<div class="it col pp' + (S.pOpen ? ' open' : '') + '"><button class="pph" data-a="ptog" aria-expanded="' + !!S.pOpen + '"><span><span>People</span><small class="k">' + pb.sum + '</small></span><span class="chev">▾</span></button><div class="ncb"><div>' + pb.body + '</div></div></div>';
   h += card('rota', 'Rota', 'Showing ' + esc(showingName) + ' · ' + (SET.wmode === 'cal' ? 'Mon – Sun' : 'Next 7 days'), rb);
+
   // Appearance
   const sty = { A: 'Filled', B: 'Badge', C: 'Dot' }, th = { auto: 'Auto', light: 'Light', dark: 'Dark' };
   let ab = '<div class="it"><span>Day style</span><span class="seg">' + seg('style', 'A', 'Filled', SET.style === 'A') + seg('style', 'B', 'Badge', SET.style === 'B') + seg('style', 'C', 'Dot', SET.style === 'C') + '</span></div>';
@@ -316,26 +364,85 @@ function settingsHtml() {
   lb += '<div class="it col"><span class="k">A new year starts with last year\'s allowance copied in. You can change it here.</span></div>';
   h += card('leave', 'Leave', (A && A.allow != null ? A.allow + ' + ' + A.carry + ' days · ' + y : 'Allowance not set'), lb);
   h += '<div class="foot">Rotapp ' + VERSION + '</div>';
-  return h;
+  return '<div class="setwrap">' + h + '</div>';
+}
+// Everyone you have imported, with Remove. Names not in your latest import show when they were last seen.
+function peopleHtml() {
+  const groups = othersIn(TEAM.groups);
+  if (!groups.length) return '';
+  const latest = new Set(TEAM.latest || []);
+  let total = 0, old = 0;
+  let h = '<div class="k" style="margin-top:6px">Everyone you have imported. Remove anyone you no longer need.</div><div class="plist">';
+  groups.forEach(([g, ns]) => {
+    h += '<div class="grp">' + esc(g) + '</div>';
+    ns.forEach((n) => {
+      const seen = TEAM.seen && TEAM.seen[n], isOld = !latest.has(n) && seen;
+      total++; if (isOld) old++;
+      h += '<div class="prw"><span>' + esc(n) + (isOld ? '<span class="old">last seen ' + MN[+seen.slice(5, 7) - 1] + '</span>' : '') + '</span><button class="rmb" data-a="rmask" data-v="' + esc(n) + '">Remove</button></div>';
+    });
+  });
+  return { sum: total + ' people' + (old ? ' · ' + old + ' not in latest import' : ''), body: h + '</div>' };
+}
+function removePerson(n) {
+  delete TEAM.people[n];
+  TEAM.groups = TEAM.groups.map(([g, ns]) => [g, ns.filter((x) => x !== n)]).filter((g) => g[1].length);
+  TEAM.latest = (TEAM.latest || []).filter((x) => x !== n);
+  if (!SET.removed.includes(n)) SET.removed.push(n);
+  if (SET.showing === n) SET.showing = null;
+  save();
+}
+// Open or close the People list inside the Rota card with the same slide.
+function togglePeople(btn) {
+  const box = btn.closest('.pp'), cb = box.querySelector('.ncb');
+  S.pOpen = !S.pOpen; btn.setAttribute('aria-expanded', String(S.pOpen));
+  if (reduceMotion()) { box.classList.toggle('open', S.pOpen); return; }
+  const done = (ev) => { if (ev && ev.target !== cb) return; cb.removeEventListener('transitionend', done); cb.style.height = ''; };
+  if (S.pOpen) { box.classList.add('open'); cb.style.height = '0px'; void cb.offsetHeight; cb.style.height = cb.scrollHeight + 'px'; }
+  else { cb.style.height = cb.scrollHeight + 'px'; void cb.offsetHeight; box.classList.remove('open'); cb.style.height = '0px'; }
+  cb.addEventListener('transitionend', done); setTimeout(() => done(), 450);
 }
 // Open or close a Settings card in place, so the slide plays; only one is open at a time.
 function toggleCard(id) {
+  const prev = S.card;
   S.card = S.card === id ? null : id;
+  // Measured-height slide with a content fade; only one card open at a time.
   document.querySelectorAll('[data-card]').forEach((c) => {
-    const on = c.dataset.card === S.card;
-    c.classList.toggle('open', on);
+    const on = c.dataset.card === S.card, was = c.dataset.card === prev, cb = c.querySelector('.cb');
     const b = c.querySelector('[data-a="card"]'); if (b) b.setAttribute('aria-expanded', String(on));
+    if (on === was || !cb) { c.classList.toggle('open', on); return; }
+    if (reduceMotion()) { c.classList.toggle('open', on); cb.style.height = ''; return; }
+    const done = (ev) => { if (ev && ev.target !== cb) return; cb.removeEventListener('transitionend', done); cb.style.height = ''; };
+    if (on) {
+      c.classList.add('open'); cb.style.height = '0px'; void cb.offsetHeight;
+      cb.style.height = cb.scrollHeight + 'px';
+    } else {
+      cb.style.height = cb.scrollHeight + 'px'; void cb.offsetHeight;
+      c.classList.remove('open'); cb.style.height = '0px';
+    }
+    cb.addEventListener('transitionend', done);
+    setTimeout(() => done(), 450);
   });
 }
 
 // ---------- day editor (bottom sheet on phones, side panel on wide screens) ----------
 function dayEditorInner() {
   const d = pk(S.sheet), cur = D[S.sheet], pick = S.pick || cur;
-  let h = '<b>' + DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()] + '</b> <span class="k">· ' + (cur ? T[cur].n : 'No shift') + '</span><div class="tiles">';
-  const tile = (x) => '<button class="tile' + (pick === x ? ' on' : '') + '" data-a="pick" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>';
+  const weekend = d.getDay() === 0 || d.getDay() === 6;
+  let h = '<b>' + DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()] + '</b> <span class="k">· ' + (cur ? T[cur].n : 'No shift') + (cur && TIMES[cur] ? ' · ' + TIMES[cur] : '') + '</span><div class="tiles">';
+  const tile = (x) => (x === 'H' && weekend)
+    ? '<button class="tile" disabled style="background:' + T[x].bg + ';color:' + T[x].fg + ';opacity:.3">' + T[x].n + '</button>'
+    : '<button class="tile' + (pick === x ? ' on' : '') + '" data-a="pick" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>';
   COMMON.forEach((x) => { h += tile(x); });
   if (S.more) MORE.forEach((x) => { h += tile(x); });
   h += '</div><button class="mrow" data-a="more">' + (S.more ? 'Fewer types ▴' : 'More types ▾') + '</button>';
+  // Same warnings as Add leave when a single day takes Holiday over, or C below zero (you can still save).
+  if (S.pick && S.pick !== cur && (S.pick === 'H' || S.pick === 'C')) {
+    const y = d.getFullYear();
+    if (S.pick === 'H') {
+      const A = allowFor(y);
+      if (A && A.allow != null) { const rem = A.allow + A.carry - countYear(y).H - 1; if (rem < 0) h += '<div class="warn" style="font-size:13px;margin-top:8px">Over your Holiday allowance by ' + (-rem) + (rem === -1 ? ' day' : ' days') + '. You can still save.</div>'; }
+    } else { const l = cLeft(y) - 1; if (l < 0) h += '<div class="warn" style="font-size:13px;margin-top:8px">C days below zero by ' + (-l) + (l === -1 ? ' day' : ' days') + '. You can still save.</div>'; }
+  }
   const why = swapBlocked(S.sheet);
   h += why ? '<button class="swapbtn" disabled>⇄ Swap with someone</button><div class="k" style="text-align:center;margin-top:4px">' + why + '</div>' : '<button class="swapbtn" data-a="swap">⇄ Swap with someone</button>';
   h += '<div class="acts"><button data-a="cancel">Cancel</button><button class="p" data-a="done">Done</button></div>';
@@ -411,6 +518,16 @@ function applySwap() {
   const who = W.who;
   S.swap = null; S.sheet = null;
   toast('Swapped with ' + who);
+}
+function bhSheetInner() {
+  const y = leaveYear(), list = bhWorked(y), e = cEarned(y), used = countYear(y).C, adj = cAdjFor(y), ro = y !== curYear();
+  let h = '<h3 class="sh">C days · ' + y + '</h3><div class="k" style="margin-bottom:6px">1 C day for each English bank holiday you work.</div>';
+  if (!list.length) h += '<div class="k" style="padding:10px 0">No bank holidays worked yet this year.</div>';
+  list.forEach((b) => { const d = pk(b.k); h += '<div class="rw"><span>' + d.getDate() + ' ' + MN[d.getMonth()] + ' · ' + b.n + '</span><span>' + chip(b.s) + ' <b>+1</b></span></div>'; });
+  h += '<div class="adj"><span>Adjust total<br><span class="k">If the count is ever wrong</span></span><span class="stepper"><button data-a="cadj" data-v="-1" aria-label="Minus one"' + (ro ? ' disabled' : '') + '>−</button><b>' + (adj > 0 ? '+' : '') + adj + '</b><button data-a="cadj" data-v="1" aria-label="Plus one"' + (ro ? ' disabled' : '') + '>+</button></span></div>';
+  h += '<div class="k">' + e + ' earned · ' + used + ' used · <b>' + (e - used) + ' left</b></div>';
+  h += '<div class="acts"><button data-a="bhclose">Close</button></div>';
+  return h;
 }
 function runSheetInner() {
   const r = S.runSheet;
@@ -491,6 +608,22 @@ function impHtml() {
     }
     h += '</div>';
   });
+  if (I.groups.length) {
+    const total = I.groups.reduce((a, g) => a + g[1].length, 0), skipped = I.groups.reduce((a, g) => a + g[1].filter((n) => I.skip.has(n)).length, 0);
+    h += '<div class="pm' + (I.pOpen ? ' open' : '') + '"><button class="ph" data-a="imppeople"><span><b>People</b><br><span class="k">Importing ' + (total - skipped) + ' of ' + total + (skipped ? ' · ' + skipped + ' skipped' : '') + '</span></span><span class="chev">▾</span></button>';
+    if (I.pOpen) {
+      I.groups.forEach(([g, ns], gi) => {
+        const cnt = ns.filter((n) => !I.skip.has(n)).length;
+        h += '<label class="igrp"><input type="checkbox" data-ig="' + gi + '"' + (cnt === ns.length ? ' checked' : '') + (cnt && cnt < ns.length ? ' data-mixed="1"' : '') + '> ' + esc(g) + '<span class="cnt">' + cnt + ' of ' + ns.length + '</span></label>';
+        if (gi === 0 && I.meGroup === g) h += '<div class="ipr me"><span class="lock">🔒</span><span>' + esc(I.matched) + ' <span class="k">(me)</span></span><span class="tag">always imported</span></div>';
+        ns.forEach((n) => {
+          const tag = SET.removed.includes(n) ? '<span class="tag">removed earlier</span>' : !TEAM.people[n] ? '<span class="tag new">new</span>' : '';
+          h += '<label class="ipr' + (I.skip.has(n) ? ' off' : '') + '"><input type="checkbox" data-ip="' + esc(n) + '"' + (I.skip.has(n) ? '' : ' checked') + '><span class="nm">' + esc(n) + '</span>' + tag + '</label>';
+        });
+      });
+    }
+    h += '</div>';
+  }
   const anyExists = I.months.some((M) => M.on && M.exists);
   h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impdone">' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + '</button></div></div>';
   return h;
@@ -517,7 +650,11 @@ function buildPreview(res, I) {
     return { y: m.year, m: m.month, days: m.days, blanks: m.blanks, doubt: m.unknown.length, warnings: m.warnings || [], exists, list, chg, open: false, on: true, team: m.team || { groups: [], people: {} } };
   });
   const groups = mergeGroups(months), count = groups.reduce((a, g) => a + g[1].length, 0);
-  S.imp = { step: 'preview', name: I.name, bytes: I.bytes, matched: res.months[0].matched, warnings: res.warnings || [], months, groups, count, showing: '' };
+  // Skipped and removed people start unticked; new people start ticked.
+  const skip = new Set(groups.flatMap((g) => g[1]).filter((n) => SET.skipped.includes(n) || SET.removed.includes(n)));
+  const meP = months.map((M) => Object.values(M.team.people).find((p) => p.me)).find(Boolean);
+  if (meP) { const gi = groups.findIndex((g) => g[0] === meP.g); if (gi > 0) groups.unshift(groups.splice(gi, 1)[0]); }
+  S.imp = { step: 'preview', name: I.name, bytes: I.bytes, matched: res.months[0].matched, warnings: res.warnings || [], months, groups, count, showing: '', skip, pOpen: false, meGroup: meP ? meP.g : null };
 }
 async function ensureJSZip() {
   if (window.JSZip) return;
@@ -564,20 +701,33 @@ function applyImport() {
     if (M.exists) replaced++; else added++;
     // Everyone else: replace their month too.
     for (const [name, p] of Object.entries(M.team.people)) {
-      if (p.me) continue;
+      if (p.me || I.skip.has(name)) continue;
+      const seen = M.y + '-' + p2(M.m + 1);
+      if (!TEAM.seen[name] || TEAM.seen[name] < seen) TEAM.seen[name] = seen;
       const tp = TEAM.people[name] || (TEAM.people[name] = { g: p.g, d: {} });
       tp.g = p.g;
       Object.keys(tp.d).forEach((k) => { if (k.startsWith(pre)) delete tp.d[k]; });
       for (const [n, c] of Object.entries(p.d)) tp.d[pre + p2(+n)] = c;
     }
   });
-  // The people list follows the most recent import.
+  // The people list keeps everyone ever imported (until removed); this import's order comes first.
   const meGroup = on.map((M) => Object.values(M.team.people).find((p) => p.me)).find(Boolean);
-  const groups = mergeGroups(on);
-  if (meGroup) { let g = groups.find((x) => x[0] === meGroup.g); if (!g) { g = [meGroup.g, []]; groups.unshift(g); } }
-  // Keep your own name in the list so "This is me" can show it.
-  if (meGroup) { const g = groups.find((x) => x[0] === meGroup.g); const idx = on[on.length - 1].team.groups.find((x) => x[0] === meGroup.g); const order = idx ? idx[1] : []; if (!g[1].includes(SET.name)) { g[1].push(SET.name); g[1].sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999)); } }
-  TEAM.groups = groups;
+  const fresh = mergeGroups(on).map(([g, ns]) => [g, ns.filter((n) => !I.skip.has(n))]);
+  if (meGroup) {
+    let g = fresh.find((x) => x[0] === meGroup.g); if (!g) { g = [meGroup.g, []]; fresh.unshift(g); }
+    const ref = on[on.length - 1].team.groups.find((x) => x[0] === meGroup.g), order = ref ? ref[1] : [];
+    if (!g[1].includes(SET.name)) { g[1].push(SET.name); g[1].sort((a, b) => (order.indexOf(a) + 1 || 999) - (order.indexOf(b) + 1 || 999)); }
+  }
+  TEAM.latest = fresh.flatMap((g) => g[1]);
+  for (const [g, ns] of TEAM.groups) {
+    let row = fresh.find((x) => x[0] === g); if (!row) { row = [g, []]; fresh.push(row); }
+    ns.forEach((n) => { if (TEAM.people[n] && !fresh.some((x) => x[1].includes(n))) row[1].push(n); });
+  }
+  TEAM.groups = fresh.filter((g) => g[1].length);
+  // Remember who was skipped; anyone imported again is no longer "removed".
+  const inFile = new Set(I.groups.flatMap((g) => g[1]));
+  SET.skipped = [...SET.skipped.filter((n) => !inFile.has(n)), ...I.skip];
+  SET.removed = SET.removed.filter((n) => !(inFile.has(n) && !I.skip.has(n)));
   SET.lastImport = { file: I.name, at: ymd(today()) };
   tidyShowing();
   save();
@@ -617,6 +767,9 @@ function restoreBackup(text) {
       if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.min(2, Math.max(0, v.carry)) : 0 };
       if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry };
       SET.showC = s.showC !== false; SET.showSick = s.showSick !== false;
+      SET.cAdj = {}; if (s.cAdj && typeof s.cAdj === 'object') for (const [yy, v] of Object.entries(s.cAdj)) if (/^\d{4}$/.test(yy) && typeof v === 'number') SET.cAdj[yy] = Math.max(-9, Math.min(9, v));
+      SET.removed = Array.isArray(s.removed) ? s.removed.map(String) : [];
+      SET.skipped = Array.isArray(s.skipped) ? s.skipped.map(String) : [];
       if (['A', 'B', 'C'].includes(s.style)) SET.style = s.style;
       if (['auto', 'light', 'dark'].includes(s.theme)) SET.theme = s.theme;
       if (['cal', 'roll'].includes(s.wmode)) SET.wmode = s.wmode;
@@ -625,7 +778,7 @@ function restoreBackup(text) {
       if (s.lastImport && typeof s.lastImport.file === 'string') SET.lastImport = s.lastImport;
       if (typeof s.lastBackup === 'string') SET.lastBackup = s.lastBackup;
     }
-    TEAM = { people: {}, groups: [] };
+    TEAM = { people: {}, groups: [], latest: [], seen: {} };
     if (d.team && typeof d.team.people === 'object' && d.team.people) {
       for (const [n, p] of Object.entries(d.team.people)) {
         if (!p || typeof p.d !== 'object') continue;
@@ -633,6 +786,8 @@ function restoreBackup(text) {
         TEAM.people[n] = { g: String(p.g || 'Other'), d: dd };
       }
       if (Array.isArray(d.team.groups)) TEAM.groups = d.team.groups.filter((g) => Array.isArray(g) && Array.isArray(g[1])).map((g) => [String(g[0]), g[1].map(String)]);
+      TEAM.latest = Array.isArray(d.team.latest) ? d.team.latest.map(String) : latestFromGroups(TEAM.groups);
+      if (d.team.seen && typeof d.team.seen === 'object') for (const [n, v] of Object.entries(d.team.seen)) if (/^\d{4}-\d{2}$/.test(v)) TEAM.seen[n] = v;
     }
     tidyShowing();
     save();
@@ -662,8 +817,16 @@ function pagedHtml(kind) {
 }
 
 // ---------- render ----------
+// Re-entrant calls (a focused field losing focus mid-render fires "change") are run straight after instead.
+let rendering = false;
 function render() {
+  if (rendering) { queueMicrotask(render); return; }
+  rendering = true;
+  try { renderNow(); } finally { rendering = false; }
+}
+function renderNow() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
+  const oldModal = document.querySelector('#ov .modal'), mTop = oldModal ? oldModal.scrollTop : 0;
   document.documentElement.setAttribute('data-theme', SET.theme);
   const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#131416';
   scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
@@ -682,9 +845,13 @@ function render() {
   }
   panel.innerHTML = pnl;
   panel.classList.toggle('open', wide && (editing || runOpen));
+  if (S.bh) ov += '<div class="dim" data-a="bhclose"></div><div class="sheet"><div class="grab"></div>' + bhSheetInner() + '</div>';
+  if (S.rm) ov += '<div class="dim" data-a="rmno"></div><div class="modal conf" role="dialog"><h3>Remove ' + esc(S.rm) + '?</h3><div class="k">They disappear from Showing and the swap list, and their saved shifts are deleted. If they appear in a future import, they come back.</div><div class="acts"><button data-a="rmno">Cancel</button><button class="d" data-a="rmyes">Remove</button></div></div>';
   ov += impHtml();
   if (S.toast) ov += '<div class="toast" role="status">' + esc(S.toast) + '</div>';
   document.getElementById('ov').innerHTML = ov;
+  document.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
+  const newModal = document.querySelector('#ov .modal'); if (newModal && oldModal) newModal.scrollTop = mTop;
   let tb = wide ? '<div class="brand">Rotapp</div>' : '';
   [['week', 'Week'], ['month', 'Month'], ['leave', 'Leave'], ['settings', 'Settings']].forEach((x) => {
     const on = t === x[0] || (t === 'add' && x[0] === 'leave');
@@ -700,10 +867,18 @@ document.addEventListener('click', (e) => {
   if (S.ymenu && (!el || (el.dataset.a !== 'yr' && el.dataset.a !== 'pickyear'))) { S.ymenu = false; render(); if (!el) return; }
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
-  if (a === 'tab') { S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
+  if (a === 'tab') { S.bh = false; S.rm = null; S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
   else if (a === 'yr') S.ymenu = !S.ymenu;
   else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; S.runSheet = null; }
   else if (a === 'card') { toggleCard(v); return; }
+  else if (a === 'ptog') { togglePeople(el); return; }
+  else if (a === 'bhsheet') S.bh = true;
+  else if (a === 'bhclose') S.bh = false;
+  else if (a === 'cadj') { const y = leaveYear(); SET.cAdj[y] = Math.max(-9, Math.min(9, cAdjFor(y) + +v)); save(); }
+  else if (a === 'rmask') S.rm = v;
+  else if (a === 'rmno') S.rm = null;
+  else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); toast(n + ' removed'); return; }
+  else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
@@ -743,7 +918,7 @@ document.addEventListener('click', (e) => {
   }
   else if (a === 'runedit') {
     const r = S.runSheet;
-    S.add = { type: r.t === 'S' ? 'S' : 'H', start: ymd(r.s), end: ymd(r.e), edit: r };
+    S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r };
     S.runSheet = null; S.tab = 'add';
   }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
@@ -762,6 +937,8 @@ document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.a === 'imptick') { S.imp.months[+t.dataset.v].on = t.checked; render(); return; }
   if (t.id === 'impShow' && S.imp) { S.imp.showing = t.value; render(); return; }
+  if (t.dataset && t.dataset.ip != null && S.imp) { const n = t.dataset.ip; if (t.checked) S.imp.skip.delete(n); else S.imp.skip.add(n); render(); return; }
+  if (t.dataset && t.dataset.ig != null && S.imp) { const ns = S.imp.groups[+t.dataset.ig][1]; ns.forEach((n) => { if (t.checked) S.imp.skip.delete(n); else S.imp.skip.add(n); }); render(); return; }
   if (t.id === 'setShow') { SET.showing = t.value || null; tidyShowing(); save(); render(); return; }
   if (t.id === 'setMe') { SET.name = t.value; tidyShowing(); save(); render(); return; }
   if (t.dataset && t.dataset.g != null) { const g = t.dataset.g; SET.swapGroups = t.checked ? [...new Set([...SET.swapGroups, g])] : SET.swapGroups.filter((x) => x !== g); save(); render(); return; }
