@@ -2,6 +2,10 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8.2 — 26 Oct 2026
+- Add leave and Change leave no longer scroll sideways on iPhone.
+- MA grouped with M, and LA with L. They keep their own codes and colours, but MA has M's hours and LA has L's, so times show on Week cards, in the day editor and in Who's on. Who's on has one section per group (M with MA, L with LA, then E); each person keeps their own tag, and your group comes first and open. MA and LA only ever swap with each other: blocked people show "Not swappable" in step 1, blocked days are disabled in step 2, and Confirm checks again.
+
 ## 0.8.1 — 26 Oct 2026
 - Day editor (and its swap steps) expands up to just under the month or week title. Other sheets still go to ¾ of the screen.
 - Undo on the day editor's edit line: "Undo swap" puts both of you back to your original shifts on every day in that swap; "Undo" on a hand edit puts the day back to its original shift. Both ask to confirm first.

@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.8.1 prototype';
+const VERSION = '0.8.2 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -19,7 +19,12 @@ const T = {
   P: { n: 'PH', sm: 'PH', bg: '#9B5CFF', fg: '#fff' },
 };
 const COMMON = ['M', 'L', 'O', 'H', 'C', 'S'];
-const TIMES = { M: '08:00–16:30', L: '15:00–23:30', E: '23:00–07:30' };
+// MA and LA are the account managers' M and L: same hours, grouped with M and L, but their own codes and colours.
+const TIMES = { M: '08:00–16:30', MA: '08:00–16:30', L: '15:00–23:30', LA: '15:00–23:30', E: '23:00–07:30' };
+const shiftGroup = (c) => (c === 'MA' ? 'M' : c === 'LA' ? 'L' : c);
+const isAM = (c) => c === 'MA' || c === 'LA';
+// MA and LA only ever swap with each other: if either side of a day is MA or LA, the other must be too.
+const swapPairOK = (a, b) => isAM(a) === isAM(b);
 const WORKED = { M: 1, L: 1, MA: 1, LA: 1, E: 1 };
 const MORE = ['X', 'MA', 'LA', 'E', 'P'];
 const LEAVE = { H: 1, C: 1, S: 1, X: 1 };
@@ -780,25 +785,27 @@ function editorPage(k) {
   return pg;
 }
 // Everyone working that day, grouped by shift (yours first and open) then by office.
-const WHO_ORDER = ['M', 'MA', 'L', 'LA', 'E'];
+// Everyone working that day, one section per group (M with MA, L with LA, then E): your group first and open, then by office.
+const WHO_ORDER = ['M', 'L', 'E'];
 function whoOnHtml(k) {
   if (!TEAM.groups.length) return '';
-  const mine = D[k], offices = TEAM.groups.map((g) => g[0]), by = {};
+  const mine = D[k], mg = WORKED[mine] ? shiftGroup(mine) : null, offices = TEAM.groups.map((g) => g[0]), by = {};
   for (const [n, p] of Object.entries(TEAM.people)) {
     const c = p.d[k];
     if (n === SET.name || !WORKED[c] || !whoShows(n, p.g)) continue;
-    (by[c] = by[c] || []).push([n, p.g]);
+    const g = shiftGroup(c);
+    (by[g] = by[g] || []).push([n, p.g, c]);
   }
-  const order = WORKED[mine] ? [mine, ...WHO_ORDER.filter((x) => x !== mine)] : WHO_ORDER;
+  const order = mg ? [mg, ...WHO_ORDER.filter((x) => x !== mg)] : WHO_ORDER;
   let h = '<div class="woh">Who\'s on · ' + longDate(k) + '</div>', any = false;
   const rank = (n, g) => { const gi = offices.indexOf(g), grp = TEAM.groups[gi]; return [gi < 0 ? 99 : gi, grp ? grp[1].indexOf(n) : 0]; };
-  order.forEach((c) => {
-    const ps = by[c]; if (!ps) return; any = true;
+  order.forEach((sg) => {
+    const ps = by[sg]; if (!ps) return; any = true;
     ps.sort((a, b) => { const x = rank(a[0], a[1]), y = rank(b[0], b[1]); return x[0] - y[0] || x[1] - y[1]; });
-    const open = c === mine;
-    h += '<div class="xw wsec' + xopen(open) + '"><div class="xi"><button class="wsh" data-a="wtog" aria-expanded="' + open + '">' + stag(c) + (TIMES[c] ? '<span class="tm">' + TIMES[c] + '</span>' : '') + (c === mine ? '<span class="you">with you</span>' : '') + '<span class="cnt">' + ps.length + (ps.length === 1 ? ' person' : ' people') + '</span><span class="chev">▾</span></button><div class="xb"><div class="wsgb">';
+    const open = sg === mg;
+    h += '<div class="xw wsec' + xopen(open) + '"><div class="xi"><button class="wsh" data-a="wtog" aria-expanded="' + open + '">' + stag(sg) + (TIMES[sg] ? '<span class="tm">' + TIMES[sg] + '</span>' : '') + (open ? '<span class="you">with you</span>' : '') + '<span class="cnt">' + ps.length + (ps.length === 1 ? ' person' : ' people') + '</span><span class="chev">▾</span></button><div class="xb"><div class="wsgb">';
     let last = null;
-    ps.forEach(([n, g]) => { if (g !== last) { h += '<div class="wog2">' + esc(g) + '</div>'; last = g; } h += '<div class="wpr">' + esc(n) + stag(c) + '</div>'; });
+    ps.forEach(([n, g, c]) => { if (g !== last) { h += '<div class="wog2">' + esc(g) + '</div>'; last = g; } h += '<div class="wpr">' + esc(n) + stag(c) + '</div>'; });
     h += '</div></div></div></div>';
   });
   if (!any) h += '<div class="k" style="padding:6px 0">No one else is working.</div>';
@@ -818,13 +825,14 @@ const chip = (c) => (c ? '<span class="chip" style="background:' + T[c].bg + ';c
 const longDate = (k) => { const d = pk(k); return DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()]; };
 const firstName = (n) => n.split(' ')[0];
 function swapMonth(name, y, m, day, their) {
-  const pd = TEAM.people[name].d, f = new Date(y, m, 1), off = (f.getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
+  const pd = TEAM.people[name].d, ok = (x) => swapPairOK(D[day], pd[day]) && swapPairOK(D[x], pd[x]), f = new Date(y, m, 1), off = (f.getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
   let h = '<div class="mh">' + MF[m] + '</div><div class="g">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('');
   for (let i = 0; i < off; i++) h += '<div></div>';
   for (let n = 1; n <= dim; n++) {
     const k = y + '-' + p2(m + 1) + '-' + p2(n), c = pd[k], t = c ? T[c] : null;
     const cls = (their === k ? ' sel' : '') + (day === k ? ' mine' : '');
-    h += t ? '<button class="c sm' + cls + '" data-a="sday" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></button>'
+    h += t && ok(k) ? '<button class="c sm' + cls + '" data-a="sday" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></button>'
+      : t ? '<button class="c sm blk' + cls + '" disabled style="background:' + t.bg + ';color:' + t.fg + '" aria-label="' + n + ', not swappable"><span>' + n + '</span><b>' + t.sm + '</b></button>'
       : '<button class="c sm' + cls + '" disabled style="background:var(--surface2);color:var(--muted)"><span>' + n + '</span></button>';
   }
   return h + '</div>';
@@ -834,7 +842,11 @@ function swapWhoPage(k) {
   let s = groups.length ? '' : '<div class="k" style="padding:12px 0">No groups are ticked for swaps. Choose them in Settings → Rota.</div>';
   groups.forEach(([g, ns]) => {
     s += '<div class="grp">' + esc(g) + '</div>';
-    ns.forEach((n) => { const c = TEAM.people[n] && TEAM.people[n].d[k]; s += '<button class="prow' + (c === mine ? ' same' : '') + '" data-a="swho" data-v="' + esc(n) + '"><span>' + esc(n) + '</span>' + chip(c) + '</button>'; });
+    ns.forEach((n) => {
+      const c = TEAM.people[n] && TEAM.people[n].d[k];
+      if (!swapPairOK(mine, c)) { s += '<button class="prow off" disabled><span>' + esc(n) + '<small class="ns">Not swappable</small></span>' + chip(c) + '</button>'; return; }
+      s += '<button class="prow' + (c === mine ? ' same' : '') + '" data-a="swho" data-v="' + esc(n) + '"><span>' + esc(n) + '</span>' + chip(c) + '</button>';
+    });
   });
   const pg = makePage({ top: '<div class="stp">Step 1 of 3</div><div class="eh">Swap ' + longDate(k) + '</div><div class="k">You: ' + T[mine].n + '. Pick who you are swapping with. Their shift on ' + shortDate(k) + ' is shown.</div>', scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back']], label: 'Swap, step 1 of 3' });
   pg.on = { back: popPage, swho: (el) => { if (TEAM.people[el.dataset.v]) pushPage(swapDayPage(k, el.dataset.v)); } };
@@ -866,7 +878,13 @@ function swapCheckPage(k, who, their) {
   let s = days.map((x) => '<div class="cmp"><div class="d">' + longDate(x) + '</div><div class="r"><span>You</span><span>' + chip(D[x]) + ' → ' + chip(od[x]) + '</span></div><div class="r"><span>' + esc(who) + '</span><span>' + chip(od[x]) + ' → ' + chip(D[x]) + '</span></div></div>').join('');
   if (days.every((x) => D[x] === od[x])) s += '<div class="k" style="margin-top:8px">Nothing would change: you are on the same shift.</div>';
   const pg = makePage({ top: '<div class="stp">Step 3 of 3</div><div class="eh">Check the swap</div><div class="k">You and ' + esc(firstName(who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>', scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back'], ['Confirm swap', 'confirm', 1]], label: 'Swap, step 3 of 3' });
-  pg.on = { back: popPage, confirm: () => applySwap(k, who, their) };
+  pg.on = {
+    back: popPage,
+    confirm: () => {
+      if (!days.every((x) => swapPairOK(D[x], (TEAM.people[who] || { d: {} }).d[x]))) { toast('Not swappable: MA and LA only swap with each other'); return; }
+      applySwap(k, who, their);
+    },
+  };
   return pg;
 }
 function applySwap(k, who, their) {
