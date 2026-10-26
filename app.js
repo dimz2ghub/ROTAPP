@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.7.6 prototype';
+const VERSION = '0.8 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -41,6 +41,7 @@ function load() {
     const d = JSON.parse(raw);
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
+    NOTES = cleanNotes(d && d.notes);
     if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [], latest: d.team.latest || latestFromGroups(d.team.groups || []), seen: d.team.seen || {} };
     // 0.5 kept one allowance; from 0.6 each year has its own.
     if (!SET.years || typeof SET.years !== 'object') SET.years = {};
@@ -51,8 +52,38 @@ function load() {
   } catch (e) { canSave = false; }
 }
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify({ v: 2, days: D, set: SET, team: TEAM })); canSave = true; }
+  try { localStorage.setItem(KEY, JSON.stringify({ v: 2, days: D, set: SET, team: TEAM, notes: NOTES })); canSave = true; }
   catch (e) { canSave = false; }
+}
+
+// Notes on changed days: NOTES[who][ymd] = { was, kind: 'swap' | 'edit', with }. Your own days use the key '@me'.
+let NOTES = {};
+const ME_KEY = '@me';
+// Keep the original "was"; a day back on its "was" shift loses its note.
+function markChange(key, k, oldC, newC, kind, withN) {
+  const m = NOTES[key] || (NOTES[key] = {}), n = m[k], was = n ? n.was : (oldC || 'O');
+  if ((newC || 'O') === was) delete m[k];
+  else m[k] = kind === 'swap' ? { was, kind: 'swap', with: withN || '' } : { was, kind: 'edit' };
+  if (!Object.keys(m).length) delete NOTES[key];
+}
+function clearNote(key, k) { const m = NOTES[key]; if (!m) return; delete m[k]; if (!Object.keys(m).length) delete NOTES[key]; }
+function clearMonthNotes(key, pre) { const m = NOTES[key]; if (!m) return; Object.keys(m).forEach((k) => { if (k.startsWith(pre)) delete m[k]; }); if (!Object.keys(m).length) delete NOTES[key]; }
+function cleanNotes(src) {
+  const out = {};
+  if (!src || typeof src !== 'object') return out;
+  for (const [who, m] of Object.entries(src)) {
+    if (!m || typeof m !== 'object') continue;
+    const o = {};
+    for (const [k, v] of Object.entries(m)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && T[v.was] && (v.kind === 'swap' || v.kind === 'edit')) o[k] = v.kind === 'swap' ? { was: v.was, kind: 'swap', with: String(v.with || '') } : { was: v.was, kind: 'edit' };
+    if (Object.keys(o).length) out[who] = o;
+  }
+  return out;
+}
+// Swapped days get a corner triangle in the colour of the shift they replaced (Off: solid black in dark mode, white in light).
+function swapPaint(k) {
+  const key = viewingOther() ? SET.showing : ME_KEY, n = NOTES[key] && NOTES[key][k];
+  if (!n || n.kind !== 'swap') return null;
+  return n.was === 'O' ? 'var(--offmark)' : T[n.was].bg;
 }
 
 // ---------- team ----------
@@ -84,15 +115,8 @@ const isWide = () => window.matchMedia('(min-width: 900px)').matches;
 // ---------- state ----------
 const S = {
   tab: 'month', woff: 0, moff: 0, sheet: null, pick: null, more: false, showPast: false,
-  add: null, imp: null, toast: '', runSheet: null, panelOpen: true,
-  pp: null, nest: { ppl: false, swap: false, who: false }, wOff: new Set(), wo: new Set(),
+  add: null, imp: null, card: null, nest: { ppl: false, swap: false, who: false }, wOff: new Set(),
 };
-let toastTimer = null;
-function toast(msg) {
-  S.toast = msg; render();
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { S.toast = ''; render(); }, 2800);
-}
 
 // ---------- leave maths ----------
 const curYear = () => today().getFullYear();
@@ -190,17 +214,18 @@ function weekBody(off) {
     const d = addDays(s, i), k = ymd(d), c = DD[k], tod = k === tk ? ' tod' : '';
     const nm = '<div class="n"><b>' + DN[d.getDay()] + '</b>' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>';
     if (!c) h += '<button class="card empty' + tod + '" data-a="day" data-k="' + k + '">' + nm + '<div class="l">–</div></button>';
-    else { const t = T[c]; h += '<button class="card' + tod + '" data-a="day" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '">' + nm + '<div class="r"><div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div>' + (TIMES[c] ? '<div class="tm">' + TIMES[c] + '</div>' : '') + '</div></button>'; }
+    else { const t = T[c], sp = swapPaint(k); h += '<button class="card' + tod + (sp ? ' swp' : '') + '" data-a="day" data-k="' + k + '" style="background-color:' + t.bg + ';color:' + t.fg + (sp ? ';--prev:' + sp : '') + '">' + nm + '<div class="r"><div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div>' + (TIMES[c] ? '<div class="tm">' + TIMES[c] + '</div>' : '') + '</div></button>'; }
   }
   return h;
 }
 function cell(n, k, c) {
-  const tod = k === ymd(today()) ? ' tod' : '', t = c ? T[c] : null;
-  const a = ' data-a="day" data-k="' + k + '" aria-label="' + n + (t ? ', ' + t.n : '') + '"';
-  if (!t) return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span></button>';
-  if (SET.style === 'A') return '<button class="c' + tod + '"' + a + ' style="background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></button>';
-  if (SET.style === 'B') return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><b class="bd" style="background:' + t.bg + ';color:' + t.fg + '">' + t.sm + '</b></button>';
-  return '<button class="c' + tod + '"' + a + ' style="background:var(--surface2)"><span class="dn">' + n + '</span><span class="dot" style="background:' + t.bg + '"></span></button>';
+  const tod = k === ymd(today()) ? ' tod' : '', t = c ? T[c] : null, sp = t ? swapPaint(k) : null;
+  const a = ' data-a="day" data-k="' + k + '" aria-label="' + n + (t ? ', ' + t.n : '') + (sp ? ', swapped' : '') + '"';
+  const cls = 'c' + tod + (sp ? ' swp' : ''), pv = sp ? ';--prev:' + sp : '';
+  if (!t) return '<button class="' + cls + '"' + a + ' style="background-color:var(--surface2)"><span class="dn">' + n + '</span></button>';
+  if (SET.style === 'A') return '<button class="' + cls + '"' + a + ' style="background-color:' + t.bg + ';color:' + t.fg + pv + '"><span>' + n + '</span><b>' + t.sm + '</b></button>';
+  if (SET.style === 'B') return '<button class="' + cls + '"' + a + ' style="background-color:var(--surface2)' + pv + '"><span class="dn">' + n + '</span><b class="bd" style="background:' + t.bg + ';color:' + t.fg + '">' + t.sm + '</b></button>';
+  return '<button class="' + cls + '"' + a + ' style="background-color:var(--surface2)' + pv + '"><span class="dn">' + n + '</span><span class="dot" style="background:' + t.bg + '"></span></button>';
 }
 const monthFirst = (mo) => new Date(today().getFullYear(), today().getMonth() + mo, 1);
 function monthTitle(mo) { const f = monthFirst(mo); return MF[f.getMonth()] + ' ' + f.getFullYear(); }
@@ -276,9 +301,8 @@ function addHtml() {
   // when editing, the old range is released first, so it does not count as used
   let usedH = c.H;
   if (A.edit && A.edit.t === 'H') usedH -= A.edit.n;
-  let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="chips">';
-  ['H', 'S', 'C'].forEach((x) => { h += '<button class="chp' + (A.type === x ? ' on' : '') + '" data-a="atype" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>'; });
-  h += '</div><label class="k" for="aStart">Start date</label><input class="fld" id="aStart" type="date" value="' + A.start + '"><label class="k" for="aEnd">End date</label><input class="fld" id="aEnd" type="date" value="' + A.end + '">';
+  let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="atype">' + segHtml('atype', [['H', 'Holiday'], ['S', 'Sick'], ['C', 'C']], A.type) + '</div>';
+  h += '<label class="k" for="aStart">Start date</label><input class="fld" id="aStart" type="date" value="' + A.start + '"><label class="k" for="aEnd">End date</label><input class="fld" id="aEnd" type="date" value="' + A.end + '">';
   const f = new Date(a.getFullYear(), a.getMonth(), 1), dim = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
   h += '<div class="k" style="margin-top:6px;text-align:center"><b>' + MF[f.getMonth()] + ' ' + f.getFullYear() + '</b></div><div class="g" style="margin-top:4px">';
   ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((x) => { h += '<div class="w">' + x + '</div>'; });
@@ -320,11 +344,17 @@ const SICON = {
   leave: ['#E8A317', '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'],
 };
 // Person picker sheet: Back to me, then everyone grouped by office, filtered by the search box.
-function ppSheetHtml() {
-  return '<div class="dim" data-a="ppclose"></div><div class="sheet pps" role="dialog" aria-label="Show rota for"><div class="grab"></div><div class="pph2"><b>Show rota for</b><button data-a="ppclose">Done</button></div><label class="srch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input id="ppq" type="search" placeholder="Search names" autocomplete="off" autocorrect="off" spellcheck="false" value="' + esc(S.pp.q) + '"></label><div class="ppl" id="ppl">' + ppListHtml() + '</div></div>';
+// Person picker: Back to me, then everyone grouped by office, filtered by the search box.
+function pickerPage() {
+  const pg = makePage({ top: '<div class="pph2"><b>Show rota for</b><button data-a="close">Done</button></div><label class="srch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input id="ppq" type="search" placeholder="Search names" autocomplete="off" autocorrect="off" spellcheck="false"></label>', scroll: ppListHtml(''), label: 'Show rota for' });
+  pg.on = { close: closeSheet, pppick: (el) => { SET.showing = el.dataset.v || null; tidyShowing(); save(); render(); closeSheet(); } };
+  const inp = pg.top.querySelector('input');
+  inp.addEventListener('input', () => { pg.inner.innerHTML = ppListHtml(inp.value); });
+  inp.addEventListener('focus', () => { if (SH.state === 'normal') shExpand(); });   // tapping the search box expands it to tall
+  return pg;
 }
-function ppListHtml() {
-  const q = S.pp.q.trim().toLowerCase(), cur = viewingOther() ? SET.showing : null;
+function ppListHtml(qq) {
+  const q = qq.trim().toLowerCase(), cur = viewingOther() ? SET.showing : null;
   let h = '';
   if (!q) h += '<button class="ppme" data-a="pppick" data-v="">Back to me<small>' + (cur ? esc(SET.name) : 'showing now') + '</small></button>';
   let any = false;
@@ -332,8 +362,8 @@ function ppListHtml() {
     const f = ns.filter((n) => !q || n.toLowerCase().includes(q)); if (!f.length) return; any = true;
     h += '<div class="ppg">' + esc(g) + '</div>' + f.map((n) => '<button class="ppr' + (n === cur ? ' cur' : '') + '" data-a="pppick" data-v="' + esc(n) + '">' + esc(n) + (n === cur ? '<span class="tk">✓</span>' : '') + '</button>').join('');
   });
-  if (!any) h += '<div class="k" style="padding:16px 2px">No one matches "' + esc(S.pp.q) + '".</div>';
-  return h;
+  if (!any) h += '<div class="k" style="padding:16px 2px">No one matches "' + esc(qq) + '".</div>';
+  return h + '<div style="height:16px"></div>';
 }
 const shortDate = (k) => { const d = pk(k); return d.getDate() + ' ' + MN[d.getMonth()]; };
 function personOptions(selected, withMe) {
@@ -344,26 +374,25 @@ function personOptions(selected, withMe) {
   return h;
 }
 function settingsHtml() {
-  const seg = (a, v, t, on) => '<button data-a="' + a + '" data-v="' + v + '" class="' + (on ? 'on' : '') + '">' + t + '</button>';
-  const hasTeam = TEAM.groups.length > 0, open = (id) => (S.card === id ? ' open' : '');
+  const hasTeam = TEAM.groups.length > 0;
   const showingName = viewingOther() ? SET.showing : 'me';
   let h = '<div class="stitle">Settings</div>';
   // Import, with backup tucked behind the arrow
-  h += '<div class="herocard' + open('backup') + '" data-card="backup"><div class="herorow">';
+  h += '<div class="xw hero' + xopen(S.card === 'backup') + '"><div class="xi"><div class="herorow">';
   h += '<button class="hmain" data-a="impstart"><span class="hic"><svg viewBox="0 0 24 24">' + SICON.imp + '</svg></span><span><b>Import rota file</b><small>' + (SET.lastImport ? 'Last: ' + esc(SET.lastImport.file) + ' · ' + shortDate(SET.lastImport.at) : 'PDF or xlsx. You check it before anything is saved.') + '</small></span></button>';
-  h += '<button class="hchev" data-a="card" data-v="backup" aria-expanded="' + (S.card === 'backup') + '" aria-label="Backup options"><span class="chev">▾</span></button></div>';
-  h += '<div class="cb"><div><div class="hinner"><div class="hk">Backup · ' + (SET.lastBackup ? 'last saved ' + shortDate(SET.lastBackup) : 'not saved yet') + '</div><div class="hbtns"><button data-a="export">Export backup</button><button data-a="bkimport">Import backup</button></div><div class="hk" style="margin-top:6px">Saves everything to a file you can keep in Files or iCloud.</div></div></div></div></div>';
+  h += '<button class="hchev" data-a="xtog" data-v="backup" aria-expanded="' + (S.card === 'backup') + '" aria-label="Backup options"><span class="chev">▾</span></button></div>';
+  h += '<div class="xb"><div class="hinner"><div class="hk">Backup · ' + (SET.lastBackup ? 'last saved ' + shortDate(SET.lastBackup) : 'not saved yet') + '</div><div class="hbtns"><button data-a="export">Export backup</button><button data-a="bkimport">Import backup</button></div><div class="hk" style="margin-top:6px">Saves everything to a file you can keep in Files or iCloud.</div></div></div></div></div>';
   if (!canSave) h += '<div class="wbar">This browser is not letting Rotapp save. Export a backup now and then to be safe.</div>';
-  const card = (id, title, sum, body) => '<div class="scard' + open(id) + '" data-card="' + id + '"><button class="ch" data-a="card" data-v="' + id + '" aria-expanded="' + (S.card === id) + '"><span class="sic" style="background:' + SICON[id][0] + '"><svg viewBox="0 0 24 24">' + SICON[id][1] + '</svg></span><span class="t"><b>' + title + '</b><small>' + sum + '</small></span><span class="chev">▾</span></button><div class="cb"><div><div class="inner">' + body + '</div></div></div></div>';
+  const card = (id, title, sum, body) => '<div class="xw xcard' + xopen(S.card === id) + '"><div class="xi"><button class="ch" data-a="xtog" data-v="' + id + '" aria-expanded="' + (S.card === id) + '"><span class="sic" style="background:' + SICON[id][0] + '"><svg viewBox="0 0 24 24">' + SICON[id][1] + '</svg></span><span class="t"><b>' + title + '</b><small>' + sum + '</small></span><span class="chev">▾</span></button><div class="xb"><div class="inner">' + body + '</div></div></div></div>';
   // Rota
   let rb = '';
   if (hasTeam) {
     rb += '<div class="it"><label for="setShow">Showing</label><span class="ctl"><button class="mebtn" data-a="showme"' + (viewingOther() ? '' : ' disabled') + '>Me</button><select class="sel" id="setShow">' + personOptions(viewingOther() ? SET.showing : '', true) + '</select></span></div>';
     const sw = TEAM.groups.map(([g]) => g).filter((g) => SET.swapGroups.includes(g));
-    rb += nestRow('swap', 'Groups in the swap list', sw.length ? esc(sw.join(', ')) : 'No groups', '<div class="k" style="margin-top:6px">Groups you can swap with.</div><div class="ticks">' + TEAM.groups.map(([g]) => '<label><input type="checkbox" data-g="' + esc(g) + '"' + (SET.swapGroups.includes(g) ? ' checked' : '') + '> ' + esc(g) + '</label>').join('') + '</div>');
+    rb += nestRow('swap', 'Groups in the swap list', sw.length ? esc(sw.join(', ')) : 'No groups', '<div class="k">Groups you can swap with.</div><div class="ticks" style="padding-bottom:10px">' + TEAM.groups.map(([g]) => '<label><input type="checkbox" data-g="' + esc(g) + '"' + (SET.swapGroups.includes(g) ? ' checked' : '') + '> ' + esc(g) + '</label>').join('') + '</div>');
     rb += nestRow('who', "Who's on", whoSummary(), whoSettingsHtml());
   } else rb += '<div class="it col"><span class="k">Import a rota to see your team here.</span></div>';
-  rb += '<div class="it"><span>Week view</span><span class="seg">' + seg('wmode', 'cal', 'Mon – Sun', SET.wmode === 'cal') + seg('wmode', 'roll', 'Next 7 days', SET.wmode === 'roll') + '</span></div>';
+  rb += '<div class="it"><span>Week view</span>' + segHtml('wmode', [['cal', 'Mon – Sun'], ['roll', 'Next 7 days']], SET.wmode) + '</div>';
   if (hasTeam && latestNames().includes(SET.name)) rb += '<div class="it"><label for="setMe">This is me</label><select class="sel" id="setMe">' + personOptions(SET.name, false) + '</select></div>';
   else rb += '<div class="it"><label for="setName">This is me</label><input class="fld wide" id="setName" type="text" value="' + esc(SET.name) + '" autocomplete="off" autocapitalize="words"></div>';
   rb += '<div class="it col"><span class="k">"This is me" is your row on the rota. Only change it if your name is written differently.</span></div>';
@@ -374,8 +403,8 @@ function settingsHtml() {
 
   // Appearance
   const sty = { A: 'Filled', B: 'Badge', C: 'Dot' }, th = { auto: 'Auto', light: 'Light', dark: 'Dark' };
-  let ab = '<div class="it"><span>Day style</span><span class="seg">' + seg('style', 'A', 'Filled', SET.style === 'A') + seg('style', 'B', 'Badge', SET.style === 'B') + seg('style', 'C', 'Dot', SET.style === 'C') + '</span></div>';
-  ab += '<div class="it"><span>Theme</span><span class="seg">' + seg('themeset', 'auto', 'Auto', SET.theme === 'auto') + seg('themeset', 'light', 'Light', SET.theme === 'light') + seg('themeset', 'dark', 'Dark', SET.theme === 'dark') + '</span></div>';
+  let ab = '<div class="it"><span>Day style</span>' + segHtml('style', [['A', 'Filled'], ['B', 'Badge'], ['C', 'Dot']], SET.style) + '</div>';
+  ab += '<div class="it"><span>Theme</span>' + segHtml('themeset', [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], SET.theme) + '</div>';
   h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme], ab);
   // Leave: this year's allowance, and which counts show on the Leave tab
   const y = curYear(), A = allowFor(y);
@@ -405,7 +434,7 @@ function peopleHtml() {
   return { sum: total + ' people' + (old ? ' · ' + old + ' not in latest import' : ''), body: h + '</div>' };
 }
 function removePerson(n) {
-  delete TEAM.people[n];
+  delete TEAM.people[n]; delete NOTES[n];
   TEAM.groups = TEAM.groups.map(([g, ns]) => [g, ns.filter((x) => x !== n)]).filter((g) => g[1].length);
   TEAM.latest = (TEAM.latest || []).filter((x) => x !== n);
   if (!SET.removed.includes(n)) SET.removed.push(n);
@@ -413,9 +442,11 @@ function removePerson(n) {
   save();
 }
 // A summary row inside the Rota card that opens in place (swap list, Who's on, People).
+const xopen = (on) => (on ? ' open' : '');
+// A summary row inside the Rota card that opens in place (swap list, Who's on, People).
 function nestRow(key, title, sum, body) {
-  const o = S.nest[key];
-  return '<div class="it col pp' + (o ? ' open' : '') + '"><button class="pph" data-a="ntog" data-v="' + key + '" aria-expanded="' + o + '"><span><span>' + title + '</span><small class="k">' + sum + '</small></span><span class="chev">▾</span></button><div class="ncb"><div>' + body + '</div></div></div>';
+  const o = !!S.nest[key];
+  return '<div class="xw row' + xopen(o) + '"><div class="xi"><button class="rh" data-a="xtog" data-v="' + key + '" aria-expanded="' + o + '"><span><span>' + title + '</span><small>' + sum + '</small></span><span class="chev">▾</span></button><div class="xb">' + body + '</div></div></div>';
 }
 // Who's on settings: offices ticked, with people inside each office that can be unticked. New people show if their office is ticked.
 const whoShows = (n, g) => !SET.whoOff.includes(g) && !SET.whoHide.includes(n);
@@ -425,13 +456,13 @@ function whoSummary() {
   return on === tot ? 'Everyone · ' + tot + ' people' : on + ' of ' + tot + ' people';
 }
 function whoSettingsHtml() {
-  let h = '<div class="k" style="margin:6px 0 4px">Who appears in the Who\'s on list in the day editor.</div>';
+  let h = '<div class="k" style="margin:0 0 4px">Who appears in the Who\'s on list in the day editor.</div>';
   othersIn(TEAM.groups).forEach(([g, ns]) => {
     const n = ns.filter((x) => whoShows(x, g)).length, offOn = !SET.whoOff.includes(g), mixed = offOn && n < ns.length, open = S.wOff.has(g);
-    h += '<div class="wog' + (open ? ' open' : '') + '"><label><input type="checkbox" data-wo="' + esc(g) + '"' + (offOn ? ' checked' : '') + (mixed ? ' data-mixed="1"' : '') + '> ' + esc(g) + '</label><span class="cnt">' + n + ' of ' + ns.length + '</span><button class="woc" data-a="wotog" data-v="' + esc(g) + '" aria-label="People in ' + esc(g) + '" aria-expanded="' + open + '">▾</button></div>';
-    if (open) h += '<div class="wpl">' + ns.map((p) => { const on = whoShows(p, g); return '<label class="' + (on ? '' : 'off') + '"><input type="checkbox" data-wp="' + esc(p) + '" data-wg="' + esc(g) + '"' + (on ? ' checked' : '') + '><span>' + esc(p) + '</span></label>'; }).join('') + '</div>';
+    h += '<div class="xw orow' + xopen(open) + '"><div class="xi"><div class="wog"><label><input type="checkbox" data-wo="' + esc(g) + '"' + (offOn ? ' checked' : '') + (mixed ? ' data-mixed="1"' : '') + '> ' + esc(g) + '</label><span class="cnt">' + n + ' of ' + ns.length + '</span><button class="woc" data-a="xtog" data-v="wo:' + esc(g) + '" aria-label="People in ' + esc(g) + '" aria-expanded="' + open + '"><span class="chev">▾</span></button></div>';
+    h += '<div class="xb"><div class="wpl">' + ns.map((p) => { const on = whoShows(p, g); return '<label class="' + (on ? '' : 'off') + '"><input type="checkbox" data-wp="' + esc(p) + '" data-wg="' + esc(g) + '"' + (on ? ' checked' : '') + '><span>' + esc(p) + '</span></label>'; }).join('') + '</div></div></div></div>';
   });
-  return h;
+  return h + '<div style="height:8px"></div>';
 }
 function whoTickOffice(g, on) {
   const ns = (othersIn(TEAM.groups).find((x) => x[0] === g) || [g, []])[1];
@@ -448,63 +479,279 @@ function whoTickPerson(p, g, on) {
     if (ns.every((n) => SET.whoHide.includes(n))) { SET.whoHide = SET.whoHide.filter((x) => !ns.includes(x)); whoTickOffice(g, false); }
   }
 }
-function toggleNest(btn) {
-  const key = btn.dataset.v, box = btn.closest('.pp'), cb = box.querySelector('.ncb');
-  S.nest[key] = !S.nest[key]; const open = S.nest[key]; btn.setAttribute('aria-expanded', String(open));
-  if (reduceMotion()) { box.classList.toggle('open', open); return; }
-  const done = (ev) => { if (ev && ev.target !== cb) return; cb.removeEventListener('transitionend', done); cb.style.height = ''; };
-  if (open) { box.classList.add('open'); cb.style.height = '0px'; void cb.offsetHeight; cb.style.height = cb.scrollHeight + 'px'; }
-  else { cb.style.height = cb.scrollHeight + 'px'; void cb.offsetHeight; box.classList.remove('open'); cb.style.height = '0px'; }
-  cb.addEventListener('transitionend', done); setTimeout(() => done(), 450);
+// ---------- Settings cards and rows that open in place: transform and opacity only ----------
+// Each section is .xw (clipping window) > .xi (the look) > .xb (the body). The page is laid out once with every
+// changing section open; each window then slides to reveal or hide its body and everything below slides with it.
+const CARD_MS = 320, CARD_EASE = 'cubic-bezier(.2,.8,.2,1)';
+let xjob = null;
+function xToggle(btn) {
+  if (xjob) xjob.commit();                                 // a tap mid-animation finishes the last one first
+  const w = btn.closest('.xw'), id = btn.dataset.v, on = !w.classList.contains('open');
+  const changes = [{ w, on }];
+  if (w.classList.contains('hero') || w.classList.contains('xcard')) {
+    S.card = on ? id : null;                               // one top-level card open at a time
+    if (on) document.querySelectorAll('.setwrap>.xw.open').forEach((o) => { if (o !== w) changes.push({ w: o, on: false }); });
+  } else if (id.startsWith('wo:')) { if (on) S.wOff.add(id.slice(3)); else S.wOff.delete(id.slice(3)); }
+  else S.nest[id] = on;
+  changes.forEach((c) => { const b = c.w.querySelector(':scope>.xi [data-a="xtog"]'); if (b) b.setAttribute('aria-expanded', String(c.on)); }); // chevrons turn straight away
+  if (reduceMotion()) { changes.forEach((c) => c.w.classList.toggle('open', c.on)); return; }
+  slideSections(changes, document.querySelector('.setwrap'), CARD_MS, CARD_EASE, (j) => { xjob = j; }, () => xjob);
 }
-// Open or close a Settings card in place, so the slide plays; only one is open at a time.
-function toggleCard(id) {
-  const prev = S.card;
-  S.card = S.card === id ? null : id;
-  // Measured-height slide with a content fade; only one card open at a time.
-  document.querySelectorAll('[data-card]').forEach((c) => {
-    const on = c.dataset.card === S.card, was = c.dataset.card === prev, cb = c.querySelector('.cb');
-    const b = c.querySelector('[data-a="card"]'); if (b) b.setAttribute('aria-expanded', String(on));
-    if (on === was || !cb) { c.classList.toggle('open', on); return; }
-    if (reduceMotion()) { c.classList.toggle('open', on); cb.style.height = ''; return; }
-    const done = (ev) => { if (ev && ev.target !== cb) return; cb.removeEventListener('transitionend', done); cb.style.height = ''; };
-    if (on) {
-      c.classList.add('open'); cb.style.height = '0px'; void cb.offsetHeight;
-      cb.style.height = cb.scrollHeight + 'px';
-    } else {
-      cb.style.height = cb.scrollHeight + 'px'; void cb.offsetHeight;
-      c.classList.remove('open'); cb.style.height = '0px';
-    }
-    cb.addEventListener('transitionend', done);
-    setTimeout(() => done(), 450);
+function slideSections(changes, root, ms, ease, setJob, getJob) {
+  changes.forEach((c) => c.w.classList.add('open'));
+  const info = changes.map((c) => {
+    const full = c.w.getBoundingClientRect().height;
+    c.w.classList.remove('open');
+    const shut = c.w.getBoundingClientRect().height;
+    c.w.classList.add('open');
+    const d = full - shut;
+    return { w: c.w, on: c.on, a: c.on ? d : 0, b: c.on ? 0 : d };   // hidden amount at the start and the end
   });
+  const M = new Map();
+  const add = (el, a, b) => { const v = M.get(el) || [0, 0]; v[0] += a; v[1] += b; M.set(el, v); };
+  info.forEach((i) => {
+    for (let n = i.w; n && n !== root; n = n.parentElement) {
+      if (n.classList.contains('xw')) { add(n, -i.a, -i.b); add(n.firstElementChild, i.a, i.b); }   // move the window's bottom edge
+      for (let s = n.nextElementSibling; s; s = s.nextElementSibling) if (!s.classList.contains('foot')) add(s, -i.a, -i.b); // slide what's below
+    }
+  });
+  const o = { duration: ms, easing: ease, fill: 'forwards' }, anims = [];
+  M.forEach((v, el) => {
+    if (Math.abs(v[0]) < 0.5 && Math.abs(v[1]) < 0.5) return;
+    anims.push(el.animate([{ transform: tr(v[0]) }, { transform: tr(v[1]) }], o));
+  });
+  info.forEach((i) => { const b = i.w.querySelector(':scope>.xi>.xb'); if (b) anims.push(b.animate(i.on ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }], { ...o, duration: i.on ? ms : ms * 0.6 })); });
+  const j = { commit() { if (getJob() !== j) return; setJob(null); anims.forEach((a) => a.cancel()); info.forEach((i) => i.w.classList.toggle('open', i.on)); } };
+  setJob(j);
+  Promise.all(anims.map((a) => a.finished)).then(() => j.commit(), () => {});
 }
 
-// ---------- day editor (bottom sheet on phones, side panel on wide screens) ----------
-function dayEditorInner() {
-  const d = pk(S.sheet), cur = D[S.sheet], pick = S.pick || cur;
-  const weekend = d.getDay() === 0 || d.getDay() === 6;
-  let h = '<b>' + DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()] + '</b> <span class="k">· ' + (cur ? T[cur].n : 'No shift') + (cur && TIMES[cur] ? ' · ' + TIMES[cur] : '') + '</span><div class="tiles">';
-  const tile = (x) => (x === 'H' && weekend)
-    ? '<button class="tile" disabled style="background:' + T[x].bg + ';color:' + T[x].fg + ';opacity:.3">' + T[x].n + '</button>'
-    : '<button class="tile' + (pick === x ? ' on' : '') + '" data-a="pick" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>';
-  COMMON.forEach((x) => { h += tile(x); });
-  if (S.more) MORE.forEach((x) => { h += tile(x); });
-  h += '</div><button class="mrow" data-a="more">' + (S.more ? 'Fewer types ▴' : 'More types ▾') + '</button>';
-  // Same warnings as Add leave when a single day takes Holiday over, or C below zero (you can still save).
-  if (S.pick && S.pick !== cur && (S.pick === 'H' || S.pick === 'C')) {
-    const y = d.getFullYear();
-    if (S.pick === 'H') {
-      const A = allowFor(y);
-      if (A && A.allow != null) { const rem = A.allow + A.carry - countYear(y).H - 1; if (rem < 0) h += '<div class="warn" style="font-size:13px;margin-top:8px">Over your Holiday allowance by ' + (-rem) + (rem === -1 ? ' day' : ' days') + '. You can still save.</div>'; }
-    } else { const l = cLeft(y) - 1; if (l < 0) h += '<div class="warn" style="font-size:13px;margin-top:8px">C days below zero by ' + (-l) + (l === -1 ? ' day' : ' days') + '. You can still save.</div>'; }
-  }
-  const why = swapBlocked(S.sheet);
-  h += why ? '<button class="swapbtn" disabled>⇄ Swap with someone</button><div class="k" style="text-align:center;margin-top:4px">' + why + '</div>' : '<button class="swapbtn" data-a="swap">⇄ Swap with someone</button>';
-  // Who's on sits below the fold: the scroll area is sized to end at the swap button (see fitEditor).
-  return '<div class="descroll"><div class="deabove">' + h + '</div>' + whoOnHtml(S.sheet) + '</div><div class="acts deacts"><button data-a="cancel">Cancel</button><button class="p" data-a="done">Done</button></div>';
+// ---------- bottom sheets: one motion for every sheet (transform and opacity only) ----------
+// pos is how far the sheet is pushed down: 0 = tall (3/4 of the screen), Tc = normal, H = closed.
+const SHEET_MS = 450, EASE_SHEET = 'cubic-bezier(.32,.72,0,1)';
+const tr = (y) => 'translate3d(0,' + y + 'px,0)', tx = (x) => 'translate3d(' + x + ',0,0)';
+const SH = { host: null, H: 0, Tc: 0, pos: 0, state: 'closed', anims: [], after: null, stack: [], expandable: true, peek: 0 };
+const shWrap = document.getElementById('sh'), shDim = document.getElementById('shdim'), shSheet = document.getElementById('sheet'), shPages = document.getElementById('pages'), shBar = document.getElementById('shbar');
+const curPage = () => SH.stack[SH.stack.length - 1];
+const barAt = (t) => Math.max(0, t - SH.Tc);                       // the button bar moves with the sheet only below normal
+const dimAt = (t) => Math.max(0, Math.min(1, 1 - (t - SH.Tc) / Math.max(1, SH.H - SH.Tc)));
+function shApply(t) { SH.pos = t; shSheet.style.transform = tr(t); shBar.style.transform = tr(barAt(t)); shDim.style.opacity = dimAt(t); }
+function makePage({ top = '', scroll = '', bar = [], label = '' }) {
+  const el = document.createElement('div');
+  el.className = 'spg';
+  el.innerHTML = '<div class="stop"><div class="grab"></div>' + top + '</div><div class="sscroll"><div class="sinner">' + scroll + '</div><div class="spad"></div></div>';
+  const pg = { el, top: el.querySelector('.stop'), scroll: el.querySelector('.sscroll'), inner: el.querySelector('.sinner'), bar, label, on: {} };
+  pg.setTop = (html) => { pg.top.innerHTML = '<div class="grab"></div>' + html; };
+  pg.scroll.addEventListener('scroll', () => el.classList.toggle('scrolled', pg.scroll.scrollTop > 2), { passive: true });
+  return pg;
 }
-// Everyone working that day, grouped by shift (yours first, open) then by office.
+const barEl = () => (SH.host === 'panel' ? document.getElementById('pbar') : shBar);
+function setBar(pg, fade) {
+  const b = barEl(); if (!b) return;
+  b.innerHTML = pg.bar.map((x) => '<button data-a="' + x[1] + '"' + (x[2] ? ' class="p"' : '') + (x[3] ? ' disabled' : '') + '>' + x[0] + '</button>').join('');
+  if (SH.host === 'panel') b.hidden = !pg.bar.length; else b.style.visibility = pg.bar.length ? '' : 'hidden';
+  if (fade && !reduceMotion()) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+}
+function shMeasure() {
+  if (SH.host !== 'sheet' || !curPage()) return;
+  SH.H = Math.round(window.innerHeight * 3 / 4);
+  shSheet.style.height = SH.H + 'px';
+  const pg = curPage(), barH = pg.bar.length ? shBar.offsetHeight : 0;
+  SH.stack.forEach((p) => { p.el.querySelector('.spad').style.height = barH + 'px'; });
+  SH.Tc = Math.max(0, SH.H - Math.min(SH.H, pg.top.offsetHeight + SH.peek + barH));
+}
+// Where the sheet is right now, read from the running animation if one is mid-way.
+function shStop() {
+  if (!SH.anims.length) return;
+  const m = new DOMMatrixReadOnly(getComputedStyle(shSheet).transform).m42;
+  SH.anims.forEach((a) => a.cancel()); SH.anims = []; SH.after = null;
+  shApply(m);
+}
+// Keyframes for something that bends at Tc (the bar and the dim), so it tracks the sheet exactly.
+function bent(from, to, f, prop) {
+  const k = [{ offset: 0, [prop]: f(from) }];
+  if ((from - SH.Tc) * (to - SH.Tc) < 0) k.push({ offset: (SH.Tc - from) / (to - from), [prop]: f(SH.Tc) });
+  k.push({ offset: 1, [prop]: f(to) });
+  return k;
+}
+function shSnap(to, done) {
+  shStop();
+  const from = SH.pos;
+  if (reduceMotion() || Math.abs(from - to) < 0.5) { shApply(to); if (done) done(); return; }
+  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  const list = [shSheet.animate([{ transform: tr(from) }, { transform: tr(to) }], o), shBar.animate(bent(from, to, (t) => tr(barAt(t)), 'transform'), o), shDim.animate(bent(from, to, dimAt, 'opacity'), o)];
+  SH.anims = list; SH.after = done;
+  Promise.all(list.map((a) => a.finished)).then(() => {
+    if (SH.anims !== list) return;
+    const cb = SH.after; SH.anims = []; SH.after = null;
+    shApply(to); list.forEach((a) => a.cancel());              // land: set the end values and drop the animations together
+    if (cb) cb();
+  }, () => {});
+}
+function shSetState(s) {
+  SH.state = s; shSheet.classList.toggle('tall', s === 'tall');
+  if (s !== 'tall' && curPage()) { curPage().scroll.scrollTop = 0; curPage().el.classList.remove('scrolled'); }
+}
+// Phones: a bottom sheet. Wide screens: pages marked panel go in the side panel instead.
+function openSheet(pg, opts = {}) {
+  closeNow();
+  SH.expandable = opts.expandable !== false; SH.peek = opts.peek || 0; SH.stack = [pg];
+  if (opts.panel && isWide()) {
+    SH.host = 'panel'; SH.state = 'panel';
+    const panel = document.getElementById('panel');
+    panel.innerHTML = '<button class="lnk pclose" data-a="shclose">Close ✕</button><div id="ppages"></div><div id="pbar" class="pbar"></div>';
+    panel.querySelector('#ppages').appendChild(pg.el); panel.classList.add('open');
+    setBar(pg);
+    return;
+  }
+  SH.host = 'sheet';
+  shPages.innerHTML = ''; shPages.appendChild(pg.el); setBar(pg);
+  shSheet.setAttribute('aria-label', pg.label || 'Sheet');
+  shWrap.hidden = false; shSetState('normal');
+  shMeasure(); shApply(SH.H); shSnap(SH.Tc);
+}
+function closeNow() {
+  if (SH.state === 'closed') return;
+  shStop();
+  if (SH.host === 'panel') { const p = document.getElementById('panel'); p.classList.remove('open'); p.innerHTML = ''; }
+  else { shWrap.hidden = true; shPages.innerHTML = ''; }
+  SH.stack = []; SH.state = 'closed'; SH.host = null;
+}
+function closeSheet() {
+  if (SH.state === 'closed' || SH.state === 'closing') return;
+  if (SH.host === 'panel') { closeNow(); return; }
+  shSetState('closing');
+  shSnap(SH.H, () => { shWrap.hidden = true; shPages.innerHTML = ''; SH.stack = []; SH.state = 'closed'; SH.host = null; });
+}
+const shExpand = () => (SH.expandable ? shSnap(0, () => shSetState('tall')) : shSnap(SH.Tc));
+const shShrink = () => { shSetState('normal'); shSnap(SH.Tc); };
+const shRefit = () => { shMeasure(); if (SH.state === 'normal') shSnap(SH.Tc); };
+// Pages inside a sheet (the swap steps) slide in from the right like iOS navigation; Back slides them out.
+function pushPage(pg, opts = {}) {
+  const old = curPage(); SH.stack.push(pg);
+  (SH.host === 'panel' ? document.getElementById('ppages') : shPages).appendChild(pg.el); setBar(pg, true);
+  if (SH.host === 'panel') { old.el.hidden = true; return; }
+  shMeasure();
+  if (opts.tall && SH.state !== 'tall') shExpand(); else if (SH.state === 'normal') shSnap(SH.Tc);
+  if (reduceMotion()) { old.el.hidden = true; return; }
+  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  const a = [pg.el.animate([{ transform: tx('100%') }, { transform: tx('0') }], o), old.el.animate([{ transform: tx('0'), opacity: 1 }, { transform: tx('-30%'), opacity: 0 }], o)];
+  Promise.all(a.map((x) => x.finished)).then(() => { old.el.hidden = true; a.forEach((x) => x.cancel()); }, () => {});
+}
+function popPage() {
+  if (SH.stack.length < 2) return;
+  const pg = SH.stack.pop(), prev = curPage(); prev.el.hidden = false; setBar(prev, true);
+  if (SH.host === 'panel') { pg.el.remove(); return; }
+  shMeasure(); if (SH.state === 'normal') shSnap(SH.Tc);
+  if (reduceMotion()) { pg.el.remove(); return; }
+  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  const a = [pg.el.animate([{ transform: tx('0') }, { transform: tx('100%') }], o), prev.el.animate([{ transform: tx('-30%'), opacity: 0 }, { transform: tx('0'), opacity: 1 }], o)];
+  Promise.all(a.map((x) => x.finished)).then(() => { pg.el.remove(); a.forEach((x) => x.cancel()); }, () => {});
+}
+// Touch events (not pointer events), so the code can choose between moving the sheet and scrolling the list.
+let gs = null;
+shSheet.addEventListener('touchstart', (e) => {
+  if (e.touches.length > 1 || SH.state === 'closing' || !curPage()) { gs = null; return; }
+  const was = SH.anims.length; shStop();                    // touching mid-animation catches the sheet where it is
+  const y = e.touches[0].clientY;
+  gs = { y0: y, p0: SH.pos, mode: was ? 'drag' : null, s: [{ y, t: e.timeStamp }], handle: y < curPage().scroll.getBoundingClientRect().top };
+}, { passive: true });
+shSheet.addEventListener('touchmove', (e) => {
+  if (!gs) return;
+  const y = e.touches[0].clientY, dy = y - gs.y0;
+  if (!gs.mode) {
+    if (Math.abs(dy) < 4) return;
+    // Normal height: any drag moves the sheet. Tall: the fixed top moves it; the list scrolls, except a pull down from its top.
+    gs.mode = SH.state !== 'tall' || gs.handle || (curPage().scroll.scrollTop <= 0 && dy > 0) ? 'drag' : 'scroll';
+    if (gs.mode === 'drag') { gs.y0 = y; gs.p0 = SH.pos; }
+  }
+  if (gs.mode !== 'drag') return;
+  e.preventDefault();
+  let t = gs.p0 + (y - gs.y0);
+  const lo = SH.expandable ? 0 : SH.Tc;
+  if (t < lo) t = lo + (t - lo) / 4;                         // a little give past fully open
+  shApply(Math.min(t, SH.H));
+  gs.s.push({ y, t: e.timeStamp }); if (gs.s.length > 8) gs.s.shift();
+}, { passive: false });
+function shEnd() {
+  if (!gs || gs.mode !== 'drag') { gs = null; return; }
+  const s = gs.s, last = s[s.length - 1]; let f = s[0];
+  for (const q of s) if (last.t - q.t <= 100) { f = q; break; }
+  const v = (last.y - f.y) / Math.max(1, last.t - f.t), proj = SH.pos + v * 220;   // where it's heading, from position plus speed
+  const targets = (SH.expandable ? [[0, 'tall']] : []).concat([[SH.Tc, 'normal'], [SH.H, 'closed']]);
+  const near = targets.sort((a, b) => Math.abs(a[0] - proj) - Math.abs(b[0] - proj))[0][1];
+  gs = null;
+  if (near === 'closed') closeSheet(); else if (near === 'tall') shExpand(); else shShrink();
+}
+shSheet.addEventListener('touchend', shEnd);
+shSheet.addEventListener('touchcancel', shEnd);
+shDim.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+shDim.addEventListener('click', () => closeSheet());
+// Mouse and trackpad: scrolling down on the sheet expands it.
+shSheet.addEventListener('wheel', (e) => { if (SH.state === 'normal' && SH.expandable && e.deltaY > 0) { e.preventDefault(); shExpand(); } }, { passive: false });
+
+// Sections that open in place inside a sheet (Who's on): the Settings card method, on the sheet's curve.
+let sjob = null;
+function toggleSection(btn, root) {
+  if (sjob) sjob.commit();
+  const w = btn.closest('.xw'), on = !w.classList.contains('open');
+  btn.setAttribute('aria-expanded', String(on));
+  if (reduceMotion()) { w.classList.toggle('open', on); return; }
+  slideSections([{ w, on }], root, SHEET_MS, EASE_SHEET, (j) => { sjob = j; }, () => sjob);
+}
+
+// ---------- day editor ----------
+const echip = (c, was) => '<span class="echip' + (was ? ' was' : '') + '" style="background:' + (c === 'O' ? 'var(--offsolid)' : T[c].bg) + ';color:' + (c === 'O' ? 'var(--text2)' : T[c].fg) + '">' + T[c].sm + '</span>';
+// Edit line under the date: the old shift crossed out, the new one, and who changed it.
+function editLine(k, cur) {
+  const n = NOTES[ME_KEY] && NOTES[ME_KEY][k];
+  if (!n) return '';
+  return '<div class="edl">' + echip(n.was, true) + '<span class="ar">→</span>' + echip(cur || 'O') + '<span>(' + (n.kind === 'swap' ? 'swapped with ' + esc(firstName(n.with || '')) : 'edited by you') + ')</span></div>';
+}
+function editorPage(k) {
+  let pick = null, more = false, warn = '';
+  const cur = D[k], d = pk(k), weekend = d.getDay() === 0 || d.getDay() === 6;
+  // Same warnings as Add leave when a single day takes Holiday over, or C below zero (you can still save).
+  const warnHtml = () => {
+    if (!pick || pick === cur || (pick !== 'H' && pick !== 'C')) return '';
+    const y = d.getFullYear();
+    if (pick === 'H') {
+      const A = allowFor(y);
+      if (A && A.allow != null) { const rem = A.allow + A.carry - countYear(y).H - 1; if (rem < 0) return '<div class="warn" style="font-size:13px;margin-top:8px">Over your Holiday allowance by ' + (-rem) + (rem === -1 ? ' day' : ' days') + '. You can still save.</div>'; }
+      return '';
+    }
+    const l = cLeft(y) - 1;
+    return l < 0 ? '<div class="warn" style="font-size:13px;margin-top:8px">C days below zero by ' + (-l) + (l === -1 ? ' day' : ' days') + '. You can still save.</div>' : '';
+  };
+  const tile = (x) => (x === 'H' && weekend)
+    ? '<button class="tile" data-v="H" disabled style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>'
+    : '<button class="tile' + ((pick || cur) === x ? ' on' : '') + '" data-a="pick" data-v="' + x + '" style="background:' + T[x].bg + ';color:' + T[x].fg + '">' + T[x].n + '</button>';
+  const topHtml = () => {
+    warn = warnHtml();
+    let h = '<div class="eh">' + longDate(k) + ' <small>· ' + (cur ? T[cur].n : 'No shift') + (cur && TIMES[cur] ? ' · ' + TIMES[cur] : '') + '</small></div>' + editLine(k, cur);
+    h += '<div class="tiles">' + (more ? COMMON.concat(MORE) : COMMON).map(tile).join('') + '</div>';
+    h += '<button class="mrow" data-a="more">' + (more ? 'Fewer types ▴' : 'More types ▾') + '</button><div class="dwarn">' + warn + '</div>';
+    const why = swapBlocked(k);
+    h += why ? '<button class="swapbtn" disabled>⇄ Swap with someone</button><div class="k" style="text-align:center;margin-top:4px">' + why + '</div>' : '<button class="swapbtn" data-a="swap">⇄ Swap with someone</button>';
+    return h;
+  };
+  const pg = makePage({ top: topHtml(), scroll: whoOnHtml(k), bar: [['Cancel', 'cancel'], ['Done', 'done', 1]], label: 'Day editor' });
+  pg.on = {
+    cancel: closeSheet,
+    done: () => { if (pick && pick !== cur) { markChange(ME_KEY, k, cur, pick, 'edit'); D[k] = pick; save(); render(); } closeSheet(); },
+    // The selection outline moves instantly between tiles.
+    pick: (el) => {
+      pick = el.dataset.v;
+      pg.top.querySelectorAll('.tile').forEach((b) => b.classList.toggle('on', b.dataset.v === pick));
+      const w = warnHtml(); if (w !== warn) { warn = w; pg.top.querySelector('.dwarn').innerHTML = w; shRefit(); }
+    },
+    more: () => { more = !more; pg.setTop(topHtml()); shRefit(); },
+    swap: () => pushPage(swapWhoPage(k), { tall: true }),
+    wtog: (el) => toggleSection(el, pg.inner),
+  };
+  return pg;
+}
+// Everyone working that day, grouped by shift (yours first and open) then by office.
 const WHO_ORDER = ['M', 'MA', 'L', 'LA', 'E'];
 function whoOnHtml(k) {
   if (!TEAM.groups.length) return '';
@@ -515,33 +762,21 @@ function whoOnHtml(k) {
     (by[c] = by[c] || []).push([n, p.g]);
   }
   const order = WORKED[mine] ? [mine, ...WHO_ORDER.filter((x) => x !== mine)] : WHO_ORDER;
-  const d = pk(k);
-  let h = '<div class="who"><div class="wtitle">Who\'s on · ' + DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>', any = false;
+  let h = '<div class="woh">Who\'s on · ' + longDate(k) + '</div>', any = false;
   const rank = (n, g) => { const gi = offices.indexOf(g), grp = TEAM.groups[gi]; return [gi < 0 ? 99 : gi, grp ? grp[1].indexOf(n) : 0]; };
   order.forEach((c) => {
     const ps = by[c]; if (!ps) return; any = true;
     ps.sort((a, b) => { const x = rank(a[0], a[1]), y = rank(b[0], b[1]); return x[0] - y[0] || x[1] - y[1]; });
-    const open = S.wo.has(c);
-    h += '<div class="wsg' + (open ? ' open' : '') + '"><button class="wsgh" data-a="wsg" data-v="' + c + '" aria-expanded="' + open + '">' + stag(c) + (TIMES[c] ? '<span class="tm">' + TIMES[c] + '</span>' : '') + (c === mine ? '<span class="you">with you</span>' : '') + '<span class="cnt">' + ps.length + (ps.length === 1 ? ' person' : ' people') + '</span><span class="chev">▾</span></button>';
-    if (open) {
-      h += '<div class="wsgb">'; let last = null;
-      ps.forEach(([n, g]) => { if (g !== last) { h += '<div class="wog2">' + esc(g) + '</div>'; last = g; } h += '<div class="wpr">' + esc(n) + stag(c) + '</div>'; });
-      h += '</div>';
-    }
-    h += '</div>';
+    const open = c === mine;
+    h += '<div class="xw wsec' + xopen(open) + '"><div class="xi"><button class="wsh" data-a="wtog" aria-expanded="' + open + '">' + stag(c) + (TIMES[c] ? '<span class="tm">' + TIMES[c] + '</span>' : '') + (c === mine ? '<span class="you">with you</span>' : '') + '<span class="cnt">' + ps.length + (ps.length === 1 ? ' person' : ' people') + '</span><span class="chev">▾</span></button><div class="xb"><div class="wsgb">';
+    let last = null;
+    ps.forEach(([n, g]) => { if (g !== last) { h += '<div class="wog2">' + esc(g) + '</div>'; last = g; } h += '<div class="wpr">' + esc(n) + stag(c) + '</div>'; });
+    h += '</div></div></div></div>';
   });
   if (!any) h += '<div class="k" style="padding:6px 0">No one else is working.</div>';
-  return h + '</div>';
+  return h + '<div style="height:12px"></div>';
 }
 const stag = (c) => '<span class="stag" style="background:' + T[c].bg + ';color:' + T[c].fg + '">' + T[c].sm + '</span>';
-// Size the editor's scroll area so it ends just under the swap button; Who's on is revealed by scrolling.
-function fitEditor(prevTop) {
-  const sc = document.querySelector('#ov .descroll'); if (!sc) return;
-  const ab = sc.querySelector('.deabove');
-  sc.style.maxHeight = (ab.offsetHeight + 12) + 'px';
-  if (prevTop != null) sc.scrollTop = prevTop;
-}
-
 // ---------- swap shifts: one day each side, both people exchange shifts on each day involved ----------
 const monthIndex = (k) => { const d = pk(k), t = today(); return (d.getFullYear() - t.getFullYear()) * 12 + d.getMonth() - t.getMonth(); };
 function swapBlocked(k) {
@@ -554,79 +789,97 @@ function swapBlocked(k) {
 const chip = (c) => (c ? '<span class="chip" style="background:' + T[c].bg + ';color:' + T[c].fg + '">' + T[c].sm + '</span>' : '<span class="chip" style="background:var(--surface2);color:var(--muted)">–</span>');
 const longDate = (k) => { const d = pk(k); return DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()]; };
 const firstName = (n) => n.split(' ')[0];
-function swapMonth(name, y, m) {
-  const W = S.swap, pd = TEAM.people[name].d, f = new Date(y, m, 1), off = (f.getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
+function swapMonth(name, y, m, day, their) {
+  const pd = TEAM.people[name].d, f = new Date(y, m, 1), off = (f.getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate();
   let h = '<div class="mh">' + MF[m] + '</div><div class="g">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('');
   for (let i = 0; i < off; i++) h += '<div></div>';
   for (let n = 1; n <= dim; n++) {
     const k = y + '-' + p2(m + 1) + '-' + p2(n), c = pd[k], t = c ? T[c] : null;
-    const cls = (W.their === k ? ' sel' : '') + (W.day === k ? ' mine' : '');
+    const cls = (their === k ? ' sel' : '') + (day === k ? ' mine' : '');
     h += t ? '<button class="c sm' + cls + '" data-a="sday" data-k="' + k + '" style="background:' + t.bg + ';color:' + t.fg + '"><span>' + n + '</span><b>' + t.sm + '</b></button>'
       : '<button class="c sm' + cls + '" disabled style="background:var(--surface2);color:var(--muted)"><span>' + n + '</span></button>';
   }
   return h + '</div>';
 }
-function swapInner() {
-  const W = S.swap, k = W.day, mine = D[k];
-  let h = '';
-  if (W.step === 'who') {
-    h += '<div class="stp">Step 1 of 3</div><h3 class="sh">Swap ' + longDate(k) + '</h3><div class="k">You: ' + T[mine].n + '. Pick who you are swapping with. Their shift on ' + shortDate(k) + ' is shown.</div>';
-    const groups = othersIn(TEAM.groups).filter(([g]) => SET.swapGroups.includes(g));
-    if (!groups.length) h += '<div class="k" style="padding:12px 0">No groups are ticked for swaps. Choose them in Settings → Rota.</div>';
-    groups.forEach(([g, ns]) => {
-      h += '<div class="grp">' + esc(g) + '</div>';
-      ns.forEach((n) => { const c = TEAM.people[n] && TEAM.people[n].d[k]; h += '<button class="prow' + (c === mine ? ' same' : '') + '" data-a="swho" data-v="' + esc(n) + '"><span>' + esc(n) + '</span>' + chip(c) + '</button>'; });
-    });
-    h += '<div class="acts"><button data-a="sback" data-v="edit">Back</button></div>';
-  } else if (W.step === 'their') {
-    const t = today(), nx = new Date(t.getFullYear(), t.getMonth() + 1, 1);
-    h += '<div class="stp">Step 2 of 3</div><h3 class="sh">Which of ' + esc(firstName(W.who)) + '\'s days?</h3><div class="k">It starts on the same day. Tap a different day to swap across days. Your day has a dashed outline.</div>';
-    h += swapMonth(W.who, t.getFullYear(), t.getMonth());
-    if (W.more) h += swapMonth(W.who, nx.getFullYear(), nx.getMonth());
-    h += '<button class="mrow" data-a="smore">' + (W.more ? 'Hide ' + MF[nx.getMonth()] + ' ▴' : 'Show ' + MF[nx.getMonth()] + ' ▾') + '</button>';
-    const tc = TEAM.people[W.who].d[W.their];
-    h += '<div class="k" style="margin-top:8px">Selected: <b>' + longDate(W.their) + '</b> · ' + esc(firstName(W.who)) + ' on ' + (tc ? T[tc].n : 'no shift') + '</div>';
-    h += '<div class="acts"><button data-a="sback" data-v="who">Back</button><button class="p" data-a="snext"' + (tc ? '' : ' disabled') + '>Next</button></div>';
-  } else {
-    const days = W.their === k ? [k] : [k, W.their].sort();
-    h += '<div class="stp">Step 3 of 3</div><h3 class="sh">Check the swap</h3><div class="k">You and ' + esc(firstName(W.who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>';
-    days.forEach((x) => {
-      const a = D[x], b = TEAM.people[W.who].d[x];
-      h += '<div class="cmp"><div class="d">' + longDate(x) + '</div><div class="r"><span>You</span><span>' + chip(a) + ' → ' + chip(b) + '</span></div><div class="r"><span>' + esc(W.who) + '</span><span>' + chip(b) + ' → ' + chip(a) + '</span></div></div>';
-    });
-    if (days.every((x) => D[x] === TEAM.people[W.who].d[x])) h += '<div class="k" style="margin-top:8px">Nothing would change: you are on the same shift.</div>';
-    h += '<div class="acts"><button data-a="sback" data-v="their">Back</button><button class="p" data-a="sconfirm">Confirm swap</button></div>';
-  }
-  return h;
+function swapWhoPage(k) {
+  const mine = D[k], groups = othersIn(TEAM.groups).filter(([g]) => SET.swapGroups.includes(g));
+  let s = groups.length ? '' : '<div class="k" style="padding:12px 0">No groups are ticked for swaps. Choose them in Settings → Rota.</div>';
+  groups.forEach(([g, ns]) => {
+    s += '<div class="grp">' + esc(g) + '</div>';
+    ns.forEach((n) => { const c = TEAM.people[n] && TEAM.people[n].d[k]; s += '<button class="prow' + (c === mine ? ' same' : '') + '" data-a="swho" data-v="' + esc(n) + '"><span>' + esc(n) + '</span>' + chip(c) + '</button>'; });
+  });
+  const pg = makePage({ top: '<div class="stp">Step 1 of 3</div><div class="eh">Swap ' + longDate(k) + '</div><div class="k">You: ' + T[mine].n + '. Pick who you are swapping with. Their shift on ' + shortDate(k) + ' is shown.</div>', scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back']], label: 'Swap, step 1 of 3' });
+  pg.on = { back: popPage, swho: (el) => { if (TEAM.people[el.dataset.v]) pushPage(swapDayPage(k, el.dataset.v)); } };
+  return pg;
 }
-function applySwap() {
-  const W = S.swap, other = TEAM.people[W.who].d;
-  const days = W.their === W.day ? [W.day] : [W.day, W.their];
+function swapDayPage(k, who) {
+  let their = k, more = monthIndex(k) === 1;
+  const t = today(), nx = new Date(t.getFullYear(), t.getMonth() + 1, 1), pd = TEAM.people[who].d;
+  const selLine = () => 'Selected: <b>' + longDate(their) + '</b> · ' + esc(firstName(who)) + ' on ' + (pd[their] ? T[pd[their]].n : 'no shift');
+  const body = () => swapMonth(who, t.getFullYear(), t.getMonth(), k, their) + (more ? swapMonth(who, nx.getFullYear(), nx.getMonth(), k, their) : '') +
+    '<button class="mrow" data-a="smore">' + (more ? 'Hide ' + MF[nx.getMonth()] + ' ▴' : 'Show ' + MF[nx.getMonth()] + ' ▾') + '</button><div class="k ssel" style="margin:8px 0 12px">' + selLine() + '</div>';
+  const pg = makePage({ top: '<div class="stp">Step 2 of 3</div><div class="eh">Which of ' + esc(firstName(who)) + '\'s days?</div><div class="k">It starts on the same day. Tap a different day to swap across days. Your day has a dashed outline.</div>', scroll: body(), bar: [['Back', 'back'], ['Next', 'next', 1, !pd[their]]], label: 'Swap, step 2 of 3' });
+  pg.on = {
+    back: popPage,
+    // The outline moves instantly to the chosen day.
+    sday: (el) => {
+      their = el.dataset.k;
+      pg.inner.querySelectorAll('.c.sel').forEach((x) => x.classList.remove('sel')); el.classList.add('sel');
+      pg.inner.querySelector('.ssel').innerHTML = selLine();
+      pg.bar[1][3] = !pd[their]; const nb = barEl().querySelector('[data-a="next"]'); if (nb) nb.disabled = !pd[their];
+    },
+    smore: () => { more = !more; pg.inner.innerHTML = body(); },
+    next: () => { if (pd[their]) pushPage(swapCheckPage(k, who, their)); },
+  };
+  return pg;
+}
+function swapCheckPage(k, who, their) {
+  const days = their === k ? [k] : [k, their].sort(), od = TEAM.people[who].d;
+  let s = days.map((x) => '<div class="cmp"><div class="d">' + longDate(x) + '</div><div class="r"><span>You</span><span>' + chip(D[x]) + ' → ' + chip(od[x]) + '</span></div><div class="r"><span>' + esc(who) + '</span><span>' + chip(od[x]) + ' → ' + chip(D[x]) + '</span></div></div>').join('');
+  if (days.every((x) => D[x] === od[x])) s += '<div class="k" style="margin-top:8px">Nothing would change: you are on the same shift.</div>';
+  const pg = makePage({ top: '<div class="stp">Step 3 of 3</div><div class="eh">Check the swap</div><div class="k">You and ' + esc(firstName(who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>', scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back'], ['Confirm swap', 'confirm', 1]], label: 'Swap, step 3 of 3' });
+  pg.on = { back: popPage, confirm: () => applySwap(k, who, their) };
+  return pg;
+}
+function applySwap(k, who, their) {
+  const other = TEAM.people[who].d, days = their === k ? [k] : [k, their];
   days.forEach((x) => {
     const a = D[x], b = other[x];
+    markChange(ME_KEY, x, a, b, 'swap', who); markChange(who, x, b, a, 'swap', SET.name);
     if (b) D[x] = b; else delete D[x];
     if (a) other[x] = a; else delete other[x];
   });
-  save();
-  const who = W.who;
-  S.swap = null; S.sheet = null;
+  save(); render(); closeSheet();
   toast('Swapped with ' + who);
 }
-function bhSheetInner() {
-  const y = leaveYear(), list = bhWorked(y), e = cEarned(y), used = countYear(y).C, adj = cAdjFor(y), ro = y !== curYear();
-  let h = '<h3 class="sh">C days · ' + y + '</h3><div class="k" style="margin-bottom:6px">1 C day for each English bank holiday you work.</div>';
-  if (!list.length) h += '<div class="k" style="padding:10px 0">No bank holidays worked yet this year.</div>';
-  list.forEach((b) => { const d = pk(b.k); h += '<div class="rw"><span>' + d.getDate() + ' ' + MN[d.getMonth()] + ' · ' + b.n + '</span><span>' + chip(b.s) + ' <b>+1</b></span></div>'; });
-  h += '<div class="adj"><span>Adjust total<br><span class="k">If the count is ever wrong</span></span><span class="stepper"><button data-a="cadj" data-v="-1" aria-label="Minus one"' + (ro ? ' disabled' : '') + '>−</button><b>' + (adj > 0 ? '+' : '') + adj + '</b><button data-a="cadj" data-v="1" aria-label="Plus one"' + (ro ? ' disabled' : '') + '>+</button></span></div>';
-  h += '<div class="k">' + e + ' earned · ' + used + ' used · <b>' + (e - used) + ' left</b></div>';
-  h += '<div class="acts"><button data-a="bhclose">Close</button></div>';
-  return h;
+function bhPage() {
+  const y = leaveYear(), ro = y !== curYear();
+  const topH = () => { const e = cEarned(y), used = countYear(y).C; return '<div class="eh">C days · ' + y + '</div><div class="k">1 C day for each English bank holiday you work.</div><div class="k" style="margin-top:4px">' + e + ' earned · ' + used + ' used · <b>' + (e - used) + ' left</b></div>'; };
+  const body = () => {
+    const list = bhWorked(y), adj = cAdjFor(y);
+    let h = list.length ? '' : '<div class="k" style="padding:10px 0">No bank holidays worked yet this year.</div>';
+    list.forEach((b) => { const d = pk(b.k); h += '<div class="rw"><span>' + d.getDate() + ' ' + MN[d.getMonth()] + ' · ' + b.n + '</span><span>' + chip(b.s) + ' <b>+1</b></span></div>'; });
+    return h + '<div class="adj"><span>Adjust total<br><span class="k">If the count is ever wrong</span></span><span class="stepper"><button data-a="cadj" data-v="-1" aria-label="Minus one"' + (ro ? ' disabled' : '') + '>−</button><b>' + (adj > 0 ? '+' : '') + adj + '</b><button data-a="cadj" data-v="1" aria-label="Plus one"' + (ro ? ' disabled' : '') + '>+</button></span></div><div style="height:12px"></div>';
+  };
+  const pg = makePage({ top: topH(), scroll: body(), bar: [['Close', 'close']], label: 'C days' });
+  pg.on = {
+    close: closeSheet,
+    cadj: (el) => { if (ro) return; SET.cAdj[y] = Math.max(-9, Math.min(9, cAdjFor(y) + +el.dataset.v)); save(); pg.setTop(topH()); pg.inner.innerHTML = body(); render(); },
+  };
+  return pg;
 }
-function runSheetInner() {
-  const r = S.runSheet;
-  return '<b>' + lab(r.s, r.e) + '</b> <span class="k">· ' + T[r.t].n + ', ' + r.n + (r.n === 1 ? ' day' : ' days') + '</span>' +
-    '<div class="acts"><button data-a="runedit">Change dates</button><button data-a="rundel" style="color:var(--danger)">Delete</button></div>' +
-    '<div class="acts" style="margin-top:8px"><button data-a="runclose">Close</button></div>';
+function runPage(r) {
+  const pg = makePage({ top: '<div class="eh">' + lab(r.s, r.e) + ' <small>· ' + T[r.t].n + ', ' + r.n + (r.n === 1 ? ' day' : ' days') + '</small></div><div class="acts"><button data-a="runedit">Change dates</button><button data-a="rundel" style="color:var(--danger)">Delete</button></div>', bar: [['Close', 'close']], label: 'Booked leave' });
+  pg.on = {
+    close: closeSheet,
+    // Change dates closes this sheet and pushes Change leave at the same time.
+    runedit: () => { closeSheet(); S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r }; pushScreen(); },
+    rundel: () => {
+      for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { D[k] = 'O'; clearNote(ME_KEY, k); } }
+      save(); closeSheet(); toast('Leave deleted');
+    },
+  };
+  return pg;
 }
 
 // ---------- import ----------
@@ -653,24 +906,23 @@ function miniGrid(M) {
   });
   return h + '</div>';
 }
-function impHtml() {
+function impInner() {
   const I = S.imp;
   if (!I) return '';
-  const dim = '<div class="dim" data-a="impcancel"></div>';
   if (I.step === 'confirm') {
-    return dim + '<div class="modal" role="dialog" aria-label="Use this file?"><h3>Use this file?</h3><p class="k" style="word-break:break-all;margin:0">' + esc(I.name) + '</p><div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impread">Confirm</button></div></div>';
+    return '<h3>Use this file?</h3><p class="k" style="word-break:break-all;margin:0">' + esc(I.name) + '</p><div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impread">Confirm</button></div>';
   }
-  if (I.step === 'reading') return dim + '<div class="modal"><div class="spin">Reading ' + esc(I.name) + '…</div></div>';
+  if (I.step === 'reading') return '<div class="spin">Reading ' + esc(I.name) + '…</div>';
   if (I.step === 'fail') {
-    let h = dim + '<div class="modal" role="dialog"><h3>Couldn\'t read that file</h3><div class="wbar">' + esc(I.message) + '</div>';
+    let h = '<h3>Couldn\'t read that file</h3><div class="wbar">' + esc(I.message) + '</div>';
     if (I.candidates && I.candidates.length) {
       h += '<p class="k" style="margin:8px 0 0">Is one of these you?</p>';
       I.candidates.forEach((c, i) => { h += '<button class="cand" data-a="impcand" data-v="' + i + '">' + esc(c) + '</button>'; });
     }
-    h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impmanual">Enter it by hand</button></div></div>';
+    h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impmanual">Enter it by hand</button></div>';
     return h;
   }
-  let h = dim + '<div class="modal" role="dialog" aria-label="Check the import"><h3>Check the import</h3>';
+  let h = '<h3>Check the import</h3>';
   h += '<div class="obar">Read ' + esc(I.matched) + '\'s row' + (I.count ? ' and ' + I.count + ' other ' + (I.count === 1 ? 'person' : 'people') : '') + ' from ' + esc(I.name) + '.</div>';
   if (I.groups.length) {
     let o = '<option value="">' + esc(I.matched) + ' (me)</option>';
@@ -718,7 +970,7 @@ function impHtml() {
     h += '</div>';
   }
   const anyExists = I.months.some((M) => M.on && M.exists);
-  h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impdone">' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + '</button></div></div>';
+  h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impdone">' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + '</button></div>';
   return h;
 }
 // Office groups across the months of one import, latest month's order first; you are left out.
@@ -790,6 +1042,7 @@ function applyImport() {
   on.forEach((M) => {
     const pre = monthKey(M.y, M.m);
     Object.keys(D).forEach((k) => { if (k.startsWith(pre)) delete D[k]; });
+    clearMonthNotes(ME_KEY, pre);
     M.days.forEach((d) => { D[pre + p2(d.n)] = d.code === '?' ? 'O' : d.code; });
     if (M.exists) replaced++; else added++;
     // Everyone else: replace their month too.
@@ -800,6 +1053,7 @@ function applyImport() {
       const tp = TEAM.people[name] || (TEAM.people[name] = { g: p.g, d: {} });
       tp.g = p.g;
       Object.keys(tp.d).forEach((k) => { if (k.startsWith(pre)) delete tp.d[k]; });
+      clearMonthNotes(name, pre);
       for (const [n, c] of Object.entries(p.d)) tp.d[pre + p2(+n)] = c;
     }
   });
@@ -836,7 +1090,7 @@ function applyImport() {
 function exportBackup() {
   try {
     SET.lastBackup = ymd(today()); save();
-    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 2, days: D, set: SET, team: TEAM })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 2, days: D, set: SET, team: TEAM, notes: NOTES })], { type: 'application/json' });
     const a = document.createElement('a'), url = URL.createObjectURL(blob);
     a.href = url; a.download = 'rotapp-backup-' + ymd(today()) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -873,6 +1127,7 @@ function restoreBackup(text) {
       if (s.lastImport && typeof s.lastImport.file === 'string') SET.lastImport = s.lastImport;
       if (typeof s.lastBackup === 'string') SET.lastBackup = s.lastBackup;
     }
+    NOTES = cleanNotes(d.notes);
     TEAM = { people: {}, groups: [], latest: [], seen: {} };
     if (d.team && typeof d.team.people === 'object' && d.team.people) {
       for (const [n, p] of Object.entries(d.team.people)) {
@@ -904,7 +1159,7 @@ function pagedHtml(kind) {
     const o = viewingOther();
     h += '<div class="pchip"><span class="pc' + (o ? '' : ' me') + '"><button class="nm" data-a="ppopen" aria-label="Choose whose rota to show">' + (o ? '<span class="who1">' + esc(SET.showing) + '</span><small>· view only</small>' : 'Me') + '<span class="cv">▾</span></button>' + (o ? '<button class="x" data-a="showme" aria-label="Back to me">✕</button>' : '') + '</span></div>';
   }
-  if (kind === 'week') h += '<div class="mid"><span class="seg"><button data-a="wmode" data-v="cal" class="' + (SET.wmode === 'cal' ? 'on' : '') + '">Mon – Sun</button><button data-a="wmode" data-v="roll" class="' + (SET.wmode === 'roll' ? 'on' : '') + '">Next 7 days</button></span></div>';
+  if (kind === 'week') h += '<div class="mid">' + segHtml('wmode', [['cal', 'Mon – Sun'], ['roll', 'Next 7 days']], SET.wmode) + '</div>';
   else h += '<div class="g wd">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('') + '</div>';
   h += '<div class="swv"><div class="trk">' + [o - 1, o, o + 1].map((x) => '<div class="pg"' + (x === o ? '' : ' aria-hidden="true" inert') + '>' + P.body(x) + '</div>').join('') + '</div></div>';
   if (kind === 'month') {
@@ -924,42 +1179,131 @@ function render() {
 }
 function renderNow() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
-  const oldModal = document.querySelector('#ov .modal'), mTop = oldModal ? oldModal.scrollTop : 0;
-  const oldEd = document.querySelector('#ov .descroll'), edTop = oldEd && S.sheet === S.edKey ? oldEd.scrollTop : null;
   document.documentElement.setAttribute('data-theme', SET.theme);
   const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#131416';
-  scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : t === 'add' ? addHtml() : settingsHtml();
+  scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : settingsHtml();
   bindTrack();
   main.classList.toggle('grouped', t === 'settings');
   main.scrollTop = top;
-  const wide = isWide(), panel = document.getElementById('panel');
-  let ov = '', pnl = '';
-  const editing = S.sheet != null, runOpen = S.runSheet != null;
-  if (wide) {
-    if (editing) pnl = '<button class="lnk" data-a="cancel" style="text-align:right;margin:0 0 8px">Close ✕</button>' + (S.swap ? swapInner() : dayEditorInner());
-    else if (runOpen) pnl = '<button class="lnk" data-a="runclose" style="text-align:right;margin:0 0 8px">Close ✕</button>' + runSheetInner();
-  } else {
-    if (editing) ov += '<div class="dim" data-a="cancel"></div><div class="sheet' + (S.swap ? '' : ' de') + '"><div class="grab"></div>' + (S.swap ? swapInner() : dayEditorInner()) + '</div>';
-    else if (runOpen) ov += '<div class="dim" data-a="runclose"></div><div class="sheet"><div class="grab"></div>' + runSheetInner() + '</div>';
-  }
-  panel.innerHTML = pnl;
-  panel.classList.toggle('open', wide && (editing || runOpen));
-  if (S.pp) ov += ppSheetHtml();
-  if (S.bh) ov += '<div class="dim" data-a="bhclose"></div><div class="sheet"><div class="grab"></div>' + bhSheetInner() + '</div>';
-  if (S.rm) ov += '<div class="dim" data-a="rmno"></div><div class="modal conf" role="dialog"><h3>Remove ' + esc(S.rm) + '?</h3><div class="k">They disappear from Showing and the swap list, and their saved shifts are deleted. If they appear in a future import, they come back.</div><div class="acts"><button data-a="rmno">Cancel</button><button class="d" data-a="rmyes">Remove</button></div></div>';
-  ov += impHtml();
-  if (S.toast) ov += '<div class="toast" role="status">' + esc(S.toast) + '</div>';
-  document.getElementById('ov').innerHTML = ov;
-  document.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
-  const newModal = document.querySelector('#ov .modal'); if (newModal && oldModal) newModal.scrollTop = mTop;
-  if (editing && !S.swap) { fitEditor(edTop); S.edKey = S.sheet; } else S.edKey = null;
-  let tb = wide ? '<div class="brand">Rotapp</div>' : '';
+  if (PUSH.on && S.add) { const push = document.getElementById('push'), st = push.scrollTop; push.querySelector('.pscr').innerHTML = addHtml(); push.scrollTop = st; }
+  modalSync();
+  markMixed(document);
+  let tb = isWide() ? '<div class="brand">Rotapp</div>' : '';
   [['week', 'Week'], ['month', 'Month'], ['leave', 'Leave'], ['settings', 'Settings']].forEach((x) => {
-    const on = t === x[0] || (t === 'add' && x[0] === 'leave');
+    const on = t === x[0];
     tb += '<button class="tab' + (on ? ' on' : '') + '" data-a="tab" data-v="' + x[0] + '"' + (on ? ' aria-current="page"' : '') + '>' + icon(x[0]) + x[1] + '</button>';
   });
   document.getElementById('nav').innerHTML = tb;
 }
+// ---------- toasts: drop in from the top, then fade away ----------
+let toastT = 0, toastA = null;
+function toast(msg) {
+  render();
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  if (toastA) toastA.cancel();
+  clearTimeout(toastT);
+  if (reduceMotion()) { t.style.opacity = 1; t.style.transform = 'translate3d(-50%,0,0)'; toastT = setTimeout(() => { t.style.opacity = 0; }, 1800); return; }
+  t.style.opacity = ''; t.style.transform = '';
+  toastA = t.animate([{ opacity: 0, transform: 'translate3d(-50%,-24px,0)' }, { opacity: 1, transform: 'translate3d(-50%,0,0)' }], { duration: 320, easing: EASE_SHEET, fill: 'forwards' });
+  toastT = setTimeout(() => { toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }); }, 1800);
+}
+// ---------- segmented controls: the highlight slides; labels switch at once ----------
+function segHtml(act, opts, val) {
+  const i = Math.max(0, opts.findIndex((o) => o[0] === val));
+  return '<span class="seg2"><span class="thumb" style="width:calc((100% - 4px) / ' + opts.length + ');transform:translate3d(' + i * 100 + '%,0,0)"></span>' +
+    opts.map((o) => '<button data-a="seg" data-act="' + act + '" data-v="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '">' + o[1] + '</button>').join('') + '</span>';
+}
+const SEGACT = {
+  wmode: (v) => { SET.wmode = v; S.woff = 0; save(); },
+  style: (v) => { SET.style = v; save(); },
+  themeset: (v) => { SET.theme = v; save(); },
+  atype: (v) => { if (S.add) S.add.type = v; },
+};
+let segTimer = 0;
+function segTap(btn) {
+  if (btn.classList.contains('on')) return;
+  const seg = btn.closest('.seg2'), btns = [...seg.querySelectorAll('button')], i = btns.indexOf(btn), th = seg.querySelector('.thumb');
+  const from = new DOMMatrixReadOnly(getComputedStyle(th).transform).m41, to = i * th.offsetWidth;
+  th.getAnimations().forEach((a) => a.cancel());
+  th.style.transform = 'translate3d(' + to + 'px,0,0)';
+  btns.forEach((b) => b.classList.toggle('on', b === btn));
+  const apply = () => { SEGACT[btn.dataset.act](btn.dataset.v); render(); };   // the screen updates once the highlight lands
+  clearTimeout(segTimer);
+  if (reduceMotion()) { apply(); return; }
+  th.animate([{ transform: 'translate3d(' + from + 'px,0,0)' }, { transform: 'translate3d(' + to + 'px,0,0)' }], { duration: 300, easing: EASE_SHEET });
+  segTimer = setTimeout(apply, 300);
+}
+// ---------- Add leave and Change leave slide in over the Leave tab ----------
+const PUSH = { on: false, anims: [] };
+const pushEls = () => [document.getElementById('push'), document.getElementById('main'), document.getElementById('pshade')];
+function pushCancel() { pushEls().forEach((el) => el.getAnimations().forEach((a) => a.cancel())); PUSH.anims = []; }
+function pushScreen() {
+  const [push, main, shade] = pushEls();
+  pushCancel();
+  push.innerHTML = '<div class="pscr">' + addHtml() + '</div>'; push.scrollTop = 0;
+  push.hidden = false; shade.hidden = false; PUSH.on = true;
+  if (reduceMotion()) { shade.style.opacity = 0; return; }
+  shade.style.opacity = '';
+  const o = { duration: SHEET_MS, easing: EASE_SHEET };
+  PUSH.anims = [push.animate([{ transform: tx('100%') }, { transform: tx('0') }], o), main.animate([{ transform: tx('0') }, { transform: tx('-30%') }], { ...o, fill: 'forwards' }), shade.animate([{ opacity: 0 }, { opacity: 0.25 }], { ...o, fill: 'forwards' })];
+}
+function pushEnd() { const [push, , shade] = pushEls(); pushCancel(); push.hidden = true; shade.hidden = true; push.innerHTML = ''; }
+function popScreen() {
+  if (!PUSH.on) return;
+  PUSH.on = false;
+  const [push, main, shade] = pushEls();
+  pushCancel();
+  if (reduceMotion()) { pushEnd(); return; }
+  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  const a = [push.animate([{ transform: tx('0') }, { transform: tx('100%') }], o), main.animate([{ transform: tx('-30%') }, { transform: tx('0') }], o), shade.animate([{ opacity: 0.25 }, { opacity: 0 }], o)];
+  PUSH.anims = a;
+  Promise.all(a.map((x) => x.finished)).then(() => { if (PUSH.anims === a && !PUSH.on) pushEnd(); }, () => {});
+}
+function pushInstant() { PUSH.on = false; pushEnd(); }
+// ---------- pop-ups (import, remove someone): fade in with a slight scale-up ----------
+const MO = { key: null, closing: false, dipping: false, pending: null };
+const moWrap = document.getElementById('mo'), moDim = document.getElementById('modim'), moBox = document.getElementById('modal');
+const moCancel = () => { moBox.getAnimations().forEach((a) => a.cancel()); moDim.getAnimations().forEach((a) => a.cancel()); };
+function rmInner() { return '<h3>Remove ' + esc(S.rm) + '?</h3><div class="k">They disappear from Showing and the swap list, and their saved shifts are deleted. If they appear in a future import, they come back.</div><div class="acts"><button data-a="rmno">Cancel</button><button class="d" data-a="rmyes">Remove</button></div>'; }
+function modalSync() {
+  const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : null;
+  if (!key) { if (MO.key) modalClose(); MO.key = null; return; }
+  const html = S.imp ? impInner() : rmInner();
+  moDim.dataset.a = S.imp ? 'impcancel' : 'rmno';
+  if (!MO.key || MO.closing) {
+    moCancel(); MO.closing = false; MO.dipping = false;
+    moBox.className = S.imp ? '' : 'conf'; moBox.innerHTML = html; moWrap.hidden = false; moBox.scrollTop = 0;
+    if (!reduceMotion()) {
+      moDim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 250 });
+      moBox.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, easing: EASE_SHEET });
+    }
+  } else if (MO.key !== key) {
+    // Next step: the whole box dips out and back in, so its size change is never seen.
+    MO.pending = html;
+    if (reduceMotion()) { moBox.innerHTML = html; moBox.scrollTop = 0; }
+    else if (!MO.dipping) {
+      MO.dipping = true; moCancel();
+      const out = moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.97)' }], { duration: 120, easing: 'ease-in', fill: 'forwards' });
+      out.finished.then(() => {
+        if (!MO.dipping) return;
+        MO.dipping = false; moBox.innerHTML = MO.pending; moBox.scrollTop = 0; markMixed(moBox);
+        moBox.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, easing: EASE_SHEET });
+        out.cancel();
+      }, () => {});
+    }
+  } else if (MO.dipping) MO.pending = html;
+  else { const st = moBox.scrollTop; moBox.innerHTML = html; moBox.scrollTop = st; }
+  MO.key = key;
+}
+function modalClose() {
+  MO.dipping = false; MO.closing = true; moCancel();
+  const end = () => { if (!MO.closing) return; MO.closing = false; moWrap.hidden = true; moBox.innerHTML = ''; moCancel(); };
+  if (reduceMotion()) { end(); return; }
+  const a = [moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.96)' }], { duration: 200, easing: 'ease-in', fill: 'forwards' }), moDim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, fill: 'forwards' })];
+  Promise.all(a.map((x) => x.finished)).then(end, () => {});
+}
+const markMixed = (root) => root.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
@@ -968,66 +1312,37 @@ document.addEventListener('click', (e) => {
   if (S.ymenu && (!el || (el.dataset.a !== 'yr' && el.dataset.a !== 'pickyear'))) { S.ymenu = false; render(); if (!el) return; }
   if (!el) return;
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
-  if (a === 'tab') { S.pp = null; S.bh = false; S.rm = null; S.tab = v; S.sheet = null; S.swap = null; S.runSheet = null; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
+  // Buttons in a sheet (or the side panel) belong to the page that is showing.
+  if (el.closest('#sh, #panel')) { if (a === 'shclose') closeSheet(); else { const f = curPage() && curPage().on[a]; if (f) f(el); } return; }
+  if (a === 'seg') { segTap(el); return; }
+  if (a === 'xtog') { xToggle(el); return; }
+  if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
   else if (a === 'yr') S.ymenu = !S.ymenu;
-  else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; S.runSheet = null; }
-  else if (a === 'card') { toggleCard(v); return; }
-  else if (a === 'ntog') { toggleNest(el); return; }
-  else if (a === 'wotog') { if (S.wOff.has(v)) S.wOff.delete(v); else S.wOff.add(v); }
+  else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; }
   else if (a === 'showme') { SET.showing = null; save(); }
-  else if (a === 'ppopen') { S.pp = { q: '' }; }
-  else if (a === 'ppclose') S.pp = null;
-  else if (a === 'pppick') { SET.showing = v || null; tidyShowing(); save(); S.pp = null; }
-  else if (a === 'wsg') { if (S.wo.has(v)) S.wo.delete(v); else S.wo.add(v); }
-  else if (a === 'bhsheet') S.bh = true;
-  else if (a === 'bhclose') S.bh = false;
-  else if (a === 'cadj') { const y = leaveYear(); SET.cAdj[y] = Math.max(-9, Math.min(9, cAdjFor(y) + +v)); save(); }
+  else if (a === 'ppopen') { openSheet(pickerPage(), { peek: 260 }); return; }
+  else if (a === 'bhsheet') { openSheet(bhPage(), { peek: 220 }); return; }
   else if (a === 'rmask') S.rm = v;
   else if (a === 'rmno') S.rm = null;
   else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
-  else if (a === 'wmode') { SET.wmode = v; S.woff = 0; save(); }
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
   else if (a === 'next') { interrupt(); animateTo(1); return; }
   else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
-  else if (a === 'style') { SET.style = v; save(); }
-  else if (a === 'themeset') { SET.theme = v; save(); }
-  else if (a === 'day') { if (viewingOther()) return; S.sheet = k; S.pick = null; S.more = false; S.runSheet = null; S.swap = null; S.wo = new Set(WORKED[D[k]] ? [D[k]] : []); }
-  else if (a === 'swap') { if (swapBlocked(S.sheet)) return; S.swap = { step: 'who', day: S.sheet }; }
-  else if (a === 'swho') { if (!TEAM.people[v]) return; S.swap.who = v; S.swap.their = S.swap.day; S.swap.more = monthIndex(S.swap.day) === 1; S.swap.step = 'their'; }
-  else if (a === 'sday') S.swap.their = k;
-  else if (a === 'smore') S.swap.more = !S.swap.more;
-  else if (a === 'snext') S.swap.step = 'confirm';
-  else if (a === 'sback') { if (v === 'edit') S.swap = null; else S.swap.step = v; }
-  else if (a === 'sconfirm') { applySwap(); return; }
-  else if (a === 'pick') S.pick = v;
-  else if (a === 'more') S.more = !S.more;
-  else if (a === 'done') { if (S.pick) { D[S.sheet] = S.pick; save(); } S.sheet = null; }
-  else if (a === 'cancel') { S.sheet = null; S.swap = null; }
+  else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0 }); return; }
   else if (a === 'past') S.showPast = !S.showPast;
-  else if (a === 'add') { S.add = addDefaults(); S.tab = 'add'; }
-  else if (a === 'atype') S.add.type = v;
-  else if (a === 'acancel') { S.add = null; S.tab = 'leave'; }
+  else if (a === 'add') { S.add = addDefaults(); pushScreen(); return; }
+  else if (a === 'acancel') { popScreen(); S.add = null; }
   else if (a === 'asave') {
     const A = S.add, s = pk(A.start), en = pk(A.end);
     if (en < s) { render(); return; }
-    if (A.edit) for (let d = A.edit.s; d <= A.edit.e; d = addDays(d, 1)) if (D[ymd(d)] === A.edit.t) D[ymd(d)] = 'O';
-    weekdaysIn(s, en).forEach((d) => { D[ymd(d)] = A.type; });
-    save(); S.add = null; S.tab = 'leave';
+    // Leave gets no note, and clears any note on the days it writes.
+    if (A.edit) for (let d = A.edit.s; d <= A.edit.e; d = addDays(d, 1)) if (D[ymd(d)] === A.edit.t) { D[ymd(d)] = 'O'; clearNote(ME_KEY, ymd(d)); }
+    weekdaysIn(s, en).forEach((d) => { D[ymd(d)] = A.type; clearNote(ME_KEY, ymd(d)); });
+    save(); S.add = null; render(); popScreen(); return;
   }
-  else if (a === 'run') { S.runSheet = leaveRuns(leaveYear())[+v]; S.sheet = null; }
-  else if (a === 'runclose') S.runSheet = null;
-  else if (a === 'rundel') {
-    const r = S.runSheet;
-    for (let d = r.s; d <= r.e; d = addDays(d, 1)) if (D[ymd(d)] === r.t) D[ymd(d)] = 'O';
-    save(); S.runSheet = null; toast('Leave deleted'); return;
-  }
-  else if (a === 'runedit') {
-    const r = S.runSheet;
-    S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r };
-    S.runSheet = null; S.tab = 'add';
-  }
+  else if (a === 'run') { openSheet(runPage(leaveRuns(leaveYear())[+v]), { panel: true, expandable: false }); return; }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
   else if (a === 'bkimport') { document.getElementById('backupFile').click(); return; }
   else if (a === 'export') { exportBackup(); return; }
@@ -1058,10 +1373,8 @@ document.addEventListener('change', (e) => {
   else if (t.id === 'setCarry') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: cur.allow, carry: Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0 }; save(); render(); }
   else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
-// Search box in the person picker: update the list only, so the keyboard stays open.
-document.addEventListener('input', (e) => {
-  if (e.target.id === 'ppq' && S.pp) { S.pp.q = e.target.value; const l = document.getElementById('ppl'); if (l) l.innerHTML = ppListHtml(); }
-});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else closeSheet(); } });
+window.addEventListener('resize', () => { if (SH.host !== 'sheet' || SH.state === 'closed' || SH.state === 'closing') return; shStop(); shMeasure(); shApply(SH.state === 'tall' ? 0 : SH.Tc); });
 document.getElementById('rotaFile').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
   e.target.value = '';
@@ -1139,7 +1452,7 @@ function interrupt() {
   transitions(false); layout(p);
   return p;
 }
-const canSwipe = () => TR && (S.tab === 'week' || S.tab === 'month') && S.sheet == null && S.runSheet == null && !S.imp && !S.pp;
+const canSwipe = () => TR && (S.tab === 'week' || S.tab === 'month') && SH.state === 'closed' && !S.imp;
 const scrEl = document.getElementById('scr');
 scrEl.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' || !e.isPrimary || !canSwipe()) return;

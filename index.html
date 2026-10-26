@@ -17,9 +17,12 @@
 <body>
 <div id="app">
   <nav id="nav" aria-label="Main"></nav>
-  <main id="main"><div id="scr"></div></main>
+  <div id="stage"><main id="main"><div id="scr"></div></main><div id="pshade" hidden></div><div id="push" hidden></div></div>
   <aside id="panel" aria-label="Day editor"></aside>
   <div id="ov"></div>
+  <div id="sh" hidden><div id="shdim"></div><div id="sheet" role="dialog" aria-modal="true"><div id="pages"></div></div><div id="shbar"></div></div>
+  <div id="mo" hidden><div id="modim"></div><div id="mwrap"><div id="modal" role="dialog" aria-modal="true"></div></div></div>
+  <div id="toast" role="status" aria-live="polite"></div>
 </div>
 <input type="file" id="rotaFile" accept=".pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <input type="file" id="backupFile" accept=".json,application/json" hidden>

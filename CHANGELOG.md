@@ -2,6 +2,20 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8 — 26 Oct 2026
+Built from the UI chat's build notes (build-notes-animations.md and build-notes-ui.md). Every animation now moves only with transform and opacity, so it can run at the iPhone's full 120 Hz.
+- Day editor sheet: slides up with the iOS sheet curve (450 ms) and the dim fades with it. It opens at normal height; swipe up for ¾ of the screen, where the editor stays fixed and only Who's on scrolls (a thin divider shows once it has scrolled). Drag down to shrink, flick down, tap the dim, Cancel or Done to close. Cancel and Done sit on their own pinned bar. The sheet can be caught mid-slide. Replaces the 0.7.6 "below the fold" layout. Desktop keeps the side panel.
+- The same sheet is used for the person picker (tapping search expands it), Bank holidays worked and Booked leave (normal height only).
+- Swap steps slide in from the right inside the sheet like iOS navigation; step 1 expands the sheet; the bottom bar's buttons change per step with a fade. Choosing a day moves the outline instantly.
+- Import pop-ups (and the Remove confirmation) fade in with a slight scale-up; each next step dips out and back in; closing fades out.
+- Add leave and Change leave slide in over the Leave tab, which slides 30% left under a soft shade. Change dates closes the booked-leave sheet and opens Change leave together.
+- Segmented controls (Week view, Day style, Theme, Add leave type) have one sliding highlight; the screen updates when it lands. Add leave type is now a segmented control.
+- Toasts drop in from the top and fade away.
+- Settings cards and the rows inside them (Groups in the swap list, Who's on and its offices, People) open with transform-only slides; Who's on sections in the day editor too. Tab switching stays instant.
+- Swap markers: swapped days get a corner triangle on Month and Week in the colour of the shift they replaced (Off: black in dark mode, white in light), on other people's rotas too.
+- Edit notes: each changed day keeps a small note (what it was, swap or edit, and with whom). The day editor shows a line under the date, e.g. "M → L (edited by you)" or "(swapped with Brooke)". Leave clears notes on its days; re-importing a month clears that month's notes; backups include the notes.
+- Reduced motion: everything jumps straight to the end state.
+
 ## 0.7.6 — 26 Oct 2026
 - Person chip under the Week and Month titles: "Me ▾", or the person's name with "view only" and a ✕ to go back to you. Tap it to open a sheet with search, "Back to me" at the top and everyone grouped by office.
 - Settings → Rota → Showing has a "Me" button to the left of the dropdown (greyed out while you're showing yourself).
