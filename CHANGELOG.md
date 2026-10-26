@@ -2,6 +2,13 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.7.6 — 26 Oct 2026
+- Person chip under the Week and Month titles: "Me ▾", or the person's name with "view only" and a ✕ to go back to you. Tap it to open a sheet with search, "Back to me" at the top and everyone grouped by office.
+- Settings → Rota → Showing has a "Me" button to the left of the dropdown (greyed out while you're showing yourself).
+- Day editor: "Who's on" sits below the swap button, revealed by scrolling. Everyone working that day, grouped by shift (yours first and open, the rest collapsed) and then by office, with each shift's time and head count. When you're off, every shift starts collapsed. Cancel and Done stay pinned at the bottom. On desktop the list shows straight away in the side panel.
+- Settings → Rota: new "Who's on" row to choose offices, and people within them, for that list. Everyone is shown to start with; new people show if their office is ticked; unticking only hides them from the list.
+- "Groups in the swap list" is now a summary row that opens in place, like People.
+
 ## 0.7.5 — 25 Oct 2026
 - People list moved into the Rota card: a "People · N people" row at the bottom of the card opens the list in place (closed by default). The separate People card is gone.
 
