@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.8 prototype';
+const VERSION = '0.8.1 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -60,10 +60,10 @@ function save() {
 let NOTES = {};
 const ME_KEY = '@me';
 // Keep the original "was"; a day back on its "was" shift loses its note.
-function markChange(key, k, oldC, newC, kind, withN) {
+function markChange(key, k, oldC, newC, kind, withN, id) {
   const m = NOTES[key] || (NOTES[key] = {}), n = m[k], was = n ? n.was : (oldC || 'O');
   if ((newC || 'O') === was) delete m[k];
-  else m[k] = kind === 'swap' ? { was, kind: 'swap', with: withN || '' } : { was, kind: 'edit' };
+  else m[k] = kind === 'swap' ? { was, kind: 'swap', with: withN || '', id: id || '' } : { was, kind: 'edit' };
   if (!Object.keys(m).length) delete NOTES[key];
 }
 function clearNote(key, k) { const m = NOTES[key]; if (!m) return; delete m[k]; if (!Object.keys(m).length) delete NOTES[key]; }
@@ -74,7 +74,7 @@ function cleanNotes(src) {
   for (const [who, m] of Object.entries(src)) {
     if (!m || typeof m !== 'object') continue;
     const o = {};
-    for (const [k, v] of Object.entries(m)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && T[v.was] && (v.kind === 'swap' || v.kind === 'edit')) o[k] = v.kind === 'swap' ? { was: v.was, kind: 'swap', with: String(v.with || '') } : { was: v.was, kind: 'edit' };
+    for (const [k, v] of Object.entries(m)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && T[v.was] && (v.kind === 'swap' || v.kind === 'edit')) o[k] = v.kind === 'swap' ? { was: v.was, kind: 'swap', with: String(v.with || ''), id: String(v.id || '') } : { was: v.was, kind: 'edit' };
     if (Object.keys(o).length) out[who] = o;
   }
   return out;
@@ -554,7 +554,8 @@ function setBar(pg, fade) {
 }
 function shMeasure() {
   if (SH.host !== 'sheet' || !curPage()) return;
-  SH.H = Math.round(window.innerHeight * 3 / 4);
+  const hd = SH.toTitle && document.querySelector('#scr .hd');
+  SH.H = hd ? Math.round(window.innerHeight - hd.getBoundingClientRect().bottom - 8) : Math.round(window.innerHeight * 3 / 4);
   shSheet.style.height = SH.H + 'px';
   const pg = curPage(), barH = pg.bar.length ? shBar.offsetHeight : 0;
   SH.stack.forEach((p) => { p.el.querySelector('.spad').style.height = barH + 'px'; });
@@ -595,7 +596,7 @@ function shSetState(s) {
 // Phones: a bottom sheet. Wide screens: pages marked panel go in the side panel instead.
 function openSheet(pg, opts = {}) {
   closeNow();
-  SH.expandable = opts.expandable !== false; SH.peek = opts.peek || 0; SH.stack = [pg];
+  SH.expandable = opts.expandable !== false; SH.peek = opts.peek || 0; SH.stack = [pg]; SH.toTitle = !!opts.toTitle;
   if (opts.panel && isWide()) {
     SH.host = 'panel'; SH.state = 'panel';
     const panel = document.getElementById('panel');
@@ -700,13 +701,39 @@ function toggleSection(btn, root) {
   slideSections([{ w, on }], root, SHEET_MS, EASE_SHEET, (j) => { sjob = j; }, () => sjob);
 }
 
+// ---------- undo a swap or a hand edit ----------
+// A swap is undone on every day it touched, for both people; days whose note has gone are left alone.
+function undoChange(k) {
+  const n = NOTES[ME_KEY] && NOTES[ME_KEY][k];
+  if (!n) return;
+  if (n.kind === 'swap') {
+    const mine = NOTES[ME_KEY], days = Object.keys(mine).filter((x) => mine[x].kind === 'swap' && (x === k || (n.id && mine[x].id === n.id)));
+    const p = TEAM.people[n.with], theirs = NOTES[n.with] || {};
+    days.forEach((x) => {
+      const w = mine[x].was; if (w === 'O' && !D[x]) delete D[x]; else D[x] = w;
+      clearNote(ME_KEY, x);
+      const t = theirs[x];
+      if (p && t && t.kind === 'swap' && (!n.id || t.id === n.id)) { p.d[x] = t.was; clearNote(n.with, x); }
+    });
+    toast('Swap with ' + firstName(n.with) + ' undone');
+  } else { D[k] = n.was; clearNote(ME_KEY, k); toast('Change undone'); }
+  save(); render();
+}
+function askUndo(k) {
+  const n = NOTES[ME_KEY] && NOTES[ME_KEY][k]; if (!n) return;
+  S.cf = n.kind === 'swap'
+    ? { title: 'Undo swap with ' + firstName(n.with) + '?', text: 'You both go back to your original shifts on every day in this swap.', yes: 'Undo swap', k }
+    : { title: 'Undo change to ' + longDate(k) + '?', text: 'The day goes back to ' + T[n.was].n + '.', yes: 'Undo', k };
+  render();
+}
+
 // ---------- day editor ----------
 const echip = (c, was) => '<span class="echip' + (was ? ' was' : '') + '" style="background:' + (c === 'O' ? 'var(--offsolid)' : T[c].bg) + ';color:' + (c === 'O' ? 'var(--text2)' : T[c].fg) + '">' + T[c].sm + '</span>';
 // Edit line under the date: the old shift crossed out, the new one, and who changed it.
 function editLine(k, cur) {
   const n = NOTES[ME_KEY] && NOTES[ME_KEY][k];
   if (!n) return '';
-  return '<div class="edl">' + echip(n.was, true) + '<span class="ar">→</span>' + echip(cur || 'O') + '<span>(' + (n.kind === 'swap' ? 'swapped with ' + esc(firstName(n.with || '')) : 'edited by you') + ')</span></div>';
+  return '<div class="edl">' + echip(n.was, true) + '<span class="ar">→</span>' + echip(cur || 'O') + '<span>(' + (n.kind === 'swap' ? 'swapped with ' + esc(firstName(n.with || '')) : 'edited by you') + ')</span><button class="undo" data-a="undo">' + (n.kind === 'swap' ? 'Undo swap' : 'Undo') + '</button></div>';
 }
 function editorPage(k) {
   let pick = null, more = false, warn = '';
@@ -747,6 +774,7 @@ function editorPage(k) {
     },
     more: () => { more = !more; pg.setTop(topHtml()); shRefit(); },
     swap: () => pushPage(swapWhoPage(k), { tall: true }),
+    undo: () => askUndo(k),
     wtog: (el) => toggleSection(el, pg.inner),
   };
   return pg;
@@ -842,10 +870,10 @@ function swapCheckPage(k, who, their) {
   return pg;
 }
 function applySwap(k, who, their) {
-  const other = TEAM.people[who].d, days = their === k ? [k] : [k, their];
+  const other = TEAM.people[who].d, days = their === k ? [k] : [k, their], id = Date.now().toString(36);
   days.forEach((x) => {
     const a = D[x], b = other[x];
-    markChange(ME_KEY, x, a, b, 'swap', who); markChange(who, x, b, a, 'swap', SET.name);
+    markChange(ME_KEY, x, a, b, 'swap', who, id); markChange(who, x, b, a, 'swap', SET.name, id);
     if (b) D[x] = b; else delete D[x];
     if (a) other[x] = a; else delete other[x];
   });
@@ -1267,10 +1295,10 @@ const moWrap = document.getElementById('mo'), moDim = document.getElementById('m
 const moCancel = () => { moBox.getAnimations().forEach((a) => a.cancel()); moDim.getAnimations().forEach((a) => a.cancel()); };
 function rmInner() { return '<h3>Remove ' + esc(S.rm) + '?</h3><div class="k">They disappear from Showing and the swap list, and their saved shifts are deleted. If they appear in a future import, they come back.</div><div class="acts"><button data-a="rmno">Cancel</button><button class="d" data-a="rmyes">Remove</button></div>'; }
 function modalSync() {
-  const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : null;
+  const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : S.cf ? 'cf' : null;
   if (!key) { if (MO.key) modalClose(); MO.key = null; return; }
-  const html = S.imp ? impInner() : rmInner();
-  moDim.dataset.a = S.imp ? 'impcancel' : 'rmno';
+  const html = S.imp ? impInner() : S.rm ? rmInner() : '<h3>' + esc(S.cf.title) + '</h3><div class="k">' + esc(S.cf.text) + '</div><div class="acts"><button data-a="cfno">Cancel</button><button class="p" data-a="cfyes">' + esc(S.cf.yes) + '</button></div>';
+  moDim.dataset.a = S.imp ? 'impcancel' : S.rm ? 'rmno' : 'cfno';
   if (!MO.key || MO.closing) {
     moCancel(); MO.closing = false; MO.dipping = false;
     moBox.className = S.imp ? '' : 'conf'; moBox.innerHTML = html; moWrap.hidden = false; moBox.scrollTop = 0;
@@ -1316,7 +1344,7 @@ document.addEventListener('click', (e) => {
   if (el.closest('#sh, #panel')) { if (a === 'shclose') closeSheet(); else { const f = curPage() && curPage().on[a]; if (f) f(el); } return; }
   if (a === 'seg') { segTap(el); return; }
   if (a === 'xtog') { xToggle(el); return; }
-  if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
+  if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.cf = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
   else if (a === 'yr') S.ymenu = !S.ymenu;
   else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; }
   else if (a === 'showme') { SET.showing = null; save(); }
@@ -1324,13 +1352,15 @@ document.addEventListener('click', (e) => {
   else if (a === 'bhsheet') { openSheet(bhPage(), { peek: 220 }); return; }
   else if (a === 'rmask') S.rm = v;
   else if (a === 'rmno') S.rm = null;
+  else if (a === 'cfno') S.cf = null;
+  else if (a === 'cfyes') { const k2 = S.cf.k; S.cf = null; closeSheet(); undoChange(k2); return; }
   else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
   else if (a === 'next') { interrupt(); animateTo(1); return; }
   else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
-  else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0 }); return; }
+  else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0, toTitle: true }); return; }
   else if (a === 'past') S.showPast = !S.showPast;
   else if (a === 'add') { S.add = addDefaults(); pushScreen(); return; }
   else if (a === 'acancel') { popScreen(); S.add = null; }
@@ -1373,7 +1403,7 @@ document.addEventListener('change', (e) => {
   else if (t.id === 'setCarry') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: cur.allow, carry: Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0 }; save(); render(); }
   else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else closeSheet(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
 window.addEventListener('resize', () => { if (SH.host !== 'sheet' || SH.state === 'closed' || SH.state === 'closing') return; shStop(); shMeasure(); shApply(SH.state === 'tall' ? 0 : SH.Tc); });
 document.getElementById('rotaFile').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];

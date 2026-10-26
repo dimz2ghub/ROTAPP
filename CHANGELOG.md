@@ -2,6 +2,10 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8.1 — 26 Oct 2026
+- Day editor (and its swap steps) expands up to just under the month or week title. Other sheets still go to ¾ of the screen.
+- Undo on the day editor's edit line: "Undo swap" puts both of you back to your original shifts on every day in that swap; "Undo" on a hand edit puts the day back to its original shift. Both ask to confirm first.
+
 ## 0.8 — 26 Oct 2026
 Built from the UI chat's build notes (build-notes-animations.md and build-notes-ui.md). Every animation now moves only with transform and opacity, so it can run at the iPhone's full 120 Hz.
 - Day editor sheet: slides up with the iOS sheet curve (450 ms) and the dim fades with it. It opens at normal height; swipe up for ¾ of the screen, where the editor stays fixed and only Who's on scrolls (a thin divider shows once it has scrolled). Drag down to shrink, flick down, tap the dim, Cancel or Done to close. Cancel and Done sit on their own pinned bar. The sheet can be caught mid-slide. Replaces the 0.7.6 "below the fold" layout. Desktop keeps the side panel.
