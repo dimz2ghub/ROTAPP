@@ -2,6 +2,19 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8.5 — 27 Oct 2026
+- Bug sweep (phone at 320 and 390 px, light and dark, desktop): fresh install, PDF and xlsx import, every tab, every Settings card and row, day editor, swap steps, leave sheets, Add leave, viewing and removing people, backup round-trip, Escape, rapid month swipes. No sideways overflow anywhere.
+- Fixed: on desktop, if the window was narrowed to phone width while the day editor was open in the side panel, the panel vanished but swiping stayed blocked.
+
+## 0.8.4 — 27 Oct 2026
+- Switches slide like iOS switches: the knob moves first and the screen updates once it lands (follows the Toggle highlight setting and Speed).
+- Fixed: a brand-new install (no saved data yet) failed to open in 0.8.3.
+
+## 0.8.3 — 27 Oct 2026
+- Animation settings in Settings → Appearance, under an "Animations" heading: an Animations switch; Speed (Relaxed / Normal / Quick, for everything except swipes); Fine-tune swipes (swipe length 450–900 ms and ease: Standard / Soft / Extra soft); Per area switches (Swipes, Sheets, Pop-ups, Add leave slide, Settings cards, Toasts, Toggle highlight); and Follow iPhone Reduce Motion (on by default; when the iPhone has Reduce Motion on, animations are off and a note explains how to override it). The Appearance summary shows the animation state.
+- Month shift counter updates as soon as the new month is known (when you let go, or tap an arrow or ↺), with a quick fade, instead of waiting for the slide to finish.
+- ↺ (jump to today) shows from one month or week away (was two).
+
 ## 0.8.2 — 26 Oct 2026
 - Add leave and Change leave no longer scroll sideways on iPhone.
 - MA grouped with M, and LA with L. They keep their own codes and colours, but MA has M's hours and LA has L's, so times show on Week cards, in the day editor and in Who's on. Who's on has one section per group (M with MA, L with LA, then E); each person keeps their own tag, and your group comes first and open. MA and LA only ever swap with each other: blocked people show "Not swappable" in step 1, blocked days are disabled in step 2, and Confirm checks again.

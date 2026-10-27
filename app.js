@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.8.2 prototype';
+const VERSION = '0.8.5 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -34,7 +34,7 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [] };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [], anim: null };
 // Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
 let TEAM = { people: {}, groups: [], latest: [], seen: {} };
 let canSave = true;
@@ -51,6 +51,7 @@ function load() {
     // 0.5 kept one allowance; from 0.6 each year has its own.
     if (!SET.years || typeof SET.years !== 'object') SET.years = {};
     if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry || 0 };
+    SET.anim = cleanAnim(SET.anim);
     if (!Array.isArray(SET.whoOff)) SET.whoOff = [];
     if (!Array.isArray(SET.whoHide)) SET.whoHide = [];
     tidyShowing();
@@ -210,7 +211,7 @@ function weekStart(off) {
   return SET.wmode === 'cal' ? addDays(b, -((b.getDay() + 6) % 7)) : b;
 }
 // Plain refresh symbol (anticlockwise) between the left chevron and the title; shows from two steps away.
-const refreshBtn = (off) => (Math.abs(off) > 1 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
+const refreshBtn = (off) => (Math.abs(off) > 0 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
 function weekTitle(off) { const s = weekStart(off); return lab(s, addDays(s, 6)); }
 function weekBody(off) {
   const s = weekStart(off), tk = ymd(today()), DD = shown();
@@ -410,7 +411,8 @@ function settingsHtml() {
   const sty = { A: 'Filled', B: 'Badge', C: 'Dot' }, th = { auto: 'Auto', light: 'Light', dark: 'Dark' };
   let ab = '<div class="it"><span>Day style</span>' + segHtml('style', [['A', 'Filled'], ['B', 'Badge'], ['C', 'Dot']], SET.style) + '</div>';
   ab += '<div class="it"><span>Theme</span>' + segHtml('themeset', [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], SET.theme) + '</div>';
-  h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme], ab);
+  ab += animSettingsHtml();
+  h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme] + ' · Animations ' + animSummary(), ab);
   // Leave: this year's allowance, and which counts show on the Leave tab
   const y = curYear(), A = allowFor(y);
   let lb = '<div class="it"><label for="setAllow">Holiday allowance (' + y + ')</label><input class="fld num" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (A && A.allow != null ? A.allow : '') + '" placeholder="–"></div>';
@@ -446,8 +448,27 @@ function removePerson(n) {
   if (SET.showing === n) SET.showing = null;
   save();
 }
-// A summary row inside the Rota card that opens in place (swap list, Who's on, People).
 const xopen = (on) => (on ? ' open' : '');
+// Animations, inside the Appearance card: switch, Speed, Fine-tune swipes, Per area, Follow iPhone Reduce Motion.
+const tgl = (k, on, dis) => '<button class="tg' + (on ? ' on' : '') + '" data-a="atg" data-k="' + k + '" role="switch" aria-checked="' + on + '"' + (dis ? ' disabled' : '') + '><i></i></button>';
+function animSummary() {
+  if (reduceMotion()) return SET.anim.on ? 'off (iPhone Reduce Motion)' : 'off';
+  const off = ANIM_AREAS.filter(([k]) => !SET.anim.areas[k]).length;
+  return ANIM_SPEED[SET.anim.speed][0] + (off ? ' · ' + off + ' off' : '');
+}
+function animSettingsHtml() {
+  const A = SET.anim, dis = reduceMotion();
+  let h = '<div class="asub">Animations</div><div class="it"><span>Animations</span>' + tgl('on', A.on) + '</div>';
+  if (A.on && A.follow && sysReduce()) h += '<div class="it col"><span class="k">Your iPhone has <b>Reduce Motion</b> on, so animations are off. Turn off "Follow iPhone Reduce Motion" below to use these settings anyway.</span></div>';
+  h += '<div class="it aspd"><span>Speed<small class="k">Everything except swipes</small></span>' + segHtml('aspeed', Object.entries(ANIM_SPEED).map(([k, v]) => [k, v[0]]), A.speed, dis) + '</div>';
+  h += nestRow('afine', 'Fine-tune swipes', '<span id="aswl">' + A.swipe + ' ms</span> · ' + ANIM_EASE[A.ease][0],
+    '<div class="it col"><div class="arow"><span>Swipe length</span><b id="aswv">' + A.swipe + ' ms</b></div><input type="range" id="aswipe" min="450" max="900" step="25" value="' + A.swipe + '"' + (dis ? ' disabled' : '') + '></div>' +
+    '<div class="it"><span>Swipe ease</span>' + segHtml('aease', Object.entries(ANIM_EASE).map(([k, v]) => [k, v[0]]), A.ease, dis) + '</div>');
+  const on = ANIM_AREAS.filter(([k]) => A.areas[k]).length;
+  h += nestRow('aarea', 'Per area', on + ' of ' + ANIM_AREAS.length + ' on', ANIM_AREAS.map(([k, n]) => '<div class="it"><span>' + n + '</span>' + tgl('area:' + k, A.areas[k], dis) + '</div>').join(''));
+  h += '<div class="it"><span>Follow iPhone Reduce Motion</span>' + tgl('follow', A.follow) + '</div>';
+  return h;
+}
 // A summary row inside the Rota card that opens in place (swap list, Who's on, People).
 function nestRow(key, title, sum, body) {
   const o = !!S.nest[key];
@@ -499,8 +520,8 @@ function xToggle(btn) {
   } else if (id.startsWith('wo:')) { if (on) S.wOff.add(id.slice(3)); else S.wOff.delete(id.slice(3)); }
   else S.nest[id] = on;
   changes.forEach((c) => { const b = c.w.querySelector(':scope>.xi [data-a="xtog"]'); if (b) b.setAttribute('aria-expanded', String(c.on)); }); // chevrons turn straight away
-  if (reduceMotion()) { changes.forEach((c) => c.w.classList.toggle('open', c.on)); return; }
-  slideSections(changes, document.querySelector('.setwrap'), CARD_MS, CARD_EASE, (j) => { xjob = j; }, () => xjob);
+  if (motionOff('cards')) { changes.forEach((c) => c.w.classList.toggle('open', c.on)); return; }
+  slideSections(changes, document.querySelector('.setwrap'), dms(CARD_MS), CARD_EASE, (j) => { xjob = j; }, () => xjob);
 }
 function slideSections(changes, root, ms, ease, setJob, getJob) {
   changes.forEach((c) => c.w.classList.add('open'));
@@ -555,7 +576,7 @@ function setBar(pg, fade) {
   const b = barEl(); if (!b) return;
   b.innerHTML = pg.bar.map((x) => '<button data-a="' + x[1] + '"' + (x[2] ? ' class="p"' : '') + (x[3] ? ' disabled' : '') + '>' + x[0] + '</button>').join('');
   if (SH.host === 'panel') b.hidden = !pg.bar.length; else b.style.visibility = pg.bar.length ? '' : 'hidden';
-  if (fade && !reduceMotion()) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220 });
+  if (fade && !motionOff('sheet')) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dms(220) });
 }
 function shMeasure() {
   if (SH.host !== 'sheet' || !curPage()) return;
@@ -583,8 +604,8 @@ function bent(from, to, f, prop) {
 function shSnap(to, done) {
   shStop();
   const from = SH.pos;
-  if (reduceMotion() || Math.abs(from - to) < 0.5) { shApply(to); if (done) done(); return; }
-  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  if (motionOff('sheet') || Math.abs(from - to) < 0.5) { shApply(to); if (done) done(); return; }
+  const o = { duration: dms(SHEET_MS), easing: EASE_SHEET, fill: 'forwards' };
   const list = [shSheet.animate([{ transform: tr(from) }, { transform: tr(to) }], o), shBar.animate(bent(from, to, (t) => tr(barAt(t)), 'transform'), o), shDim.animate(bent(from, to, dimAt, 'opacity'), o)];
   SH.anims = list; SH.after = done;
   Promise.all(list.map((a) => a.finished)).then(() => {
@@ -639,8 +660,8 @@ function pushPage(pg, opts = {}) {
   if (SH.host === 'panel') { old.el.hidden = true; return; }
   shMeasure();
   if (opts.tall && SH.state !== 'tall') shExpand(); else if (SH.state === 'normal') shSnap(SH.Tc);
-  if (reduceMotion()) { old.el.hidden = true; return; }
-  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  if (motionOff('sheet')) { old.el.hidden = true; return; }
+  const o = { duration: dms(SHEET_MS), easing: EASE_SHEET, fill: 'forwards' };
   const a = [pg.el.animate([{ transform: tx('100%') }, { transform: tx('0') }], o), old.el.animate([{ transform: tx('0'), opacity: 1 }, { transform: tx('-30%'), opacity: 0 }], o)];
   Promise.all(a.map((x) => x.finished)).then(() => { old.el.hidden = true; a.forEach((x) => x.cancel()); }, () => {});
 }
@@ -649,8 +670,8 @@ function popPage() {
   const pg = SH.stack.pop(), prev = curPage(); prev.el.hidden = false; setBar(prev, true);
   if (SH.host === 'panel') { pg.el.remove(); return; }
   shMeasure(); if (SH.state === 'normal') shSnap(SH.Tc);
-  if (reduceMotion()) { pg.el.remove(); return; }
-  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  if (motionOff('sheet')) { pg.el.remove(); return; }
+  const o = { duration: dms(SHEET_MS), easing: EASE_SHEET, fill: 'forwards' };
   const a = [pg.el.animate([{ transform: tx('0') }, { transform: tx('100%') }], o), prev.el.animate([{ transform: tx('-30%'), opacity: 0 }, { transform: tx('0'), opacity: 1 }], o)];
   Promise.all(a.map((x) => x.finished)).then(() => { pg.el.remove(); a.forEach((x) => x.cancel()); }, () => {});
 }
@@ -702,8 +723,8 @@ function toggleSection(btn, root) {
   if (sjob) sjob.commit();
   const w = btn.closest('.xw'), on = !w.classList.contains('open');
   btn.setAttribute('aria-expanded', String(on));
-  if (reduceMotion()) { w.classList.toggle('open', on); return; }
-  slideSections([{ w, on }], root, SHEET_MS, EASE_SHEET, (j) => { sjob = j; }, () => sjob);
+  if (motionOff('sheet')) { w.classList.toggle('open', on); return; }
+  slideSections([{ w, on }], root, dms(SHEET_MS), EASE_SHEET, (j) => { sjob = j; }, () => sjob);
 }
 
 // ---------- undo a swap or a hand edit ----------
@@ -1165,6 +1186,7 @@ function restoreBackup(text) {
       SET.skipped = Array.isArray(s.skipped) ? s.skipped.map(String) : [];
       SET.whoOff = Array.isArray(s.whoOff) ? s.whoOff.map(String) : [];
       SET.whoHide = Array.isArray(s.whoHide) ? s.whoHide.map(String) : [];
+      SET.anim = cleanAnim(s.anim);
       if (['A', 'B', 'C'].includes(s.style)) SET.style = s.style;
       if (['auto', 'light', 'dark'].includes(s.theme)) SET.theme = s.theme;
       if (['cal', 'roll'].includes(s.wmode)) SET.wmode = s.wmode;
@@ -1226,6 +1248,7 @@ function render() {
 function renderNow() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
+  document.documentElement.classList.toggle('noanim', reduceMotion());
   const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#131416';
   scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : settingsHtml();
   bindTrack();
@@ -1249,23 +1272,37 @@ function toast(msg) {
   t.textContent = msg;
   if (toastA) toastA.cancel();
   clearTimeout(toastT);
-  if (reduceMotion()) { t.style.opacity = 1; t.style.transform = 'translate3d(-50%,0,0)'; toastT = setTimeout(() => { t.style.opacity = 0; }, 1800); return; }
+  if (motionOff('toast')) { t.style.opacity = 1; t.style.transform = 'translate3d(-50%,0,0)'; toastT = setTimeout(() => { t.style.opacity = 0; }, 1800); return; }
   t.style.opacity = ''; t.style.transform = '';
-  toastA = t.animate([{ opacity: 0, transform: 'translate3d(-50%,-24px,0)' }, { opacity: 1, transform: 'translate3d(-50%,0,0)' }], { duration: 320, easing: EASE_SHEET, fill: 'forwards' });
-  toastT = setTimeout(() => { toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: 220, easing: 'ease-in', fill: 'forwards' }); }, 1800);
+  toastA = t.animate([{ opacity: 0, transform: 'translate3d(-50%,-24px,0)' }, { opacity: 1, transform: 'translate3d(-50%,0,0)' }], { duration: dms(320), easing: EASE_SHEET, fill: 'forwards' });
+  toastT = setTimeout(() => { toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: dms(220), easing: 'ease-in', fill: 'forwards' }); }, 1800);
 }
 // ---------- segmented controls: the highlight slides; labels switch at once ----------
-function segHtml(act, opts, val) {
+function segHtml(act, opts, val, dis) {
   const i = Math.max(0, opts.findIndex((o) => o[0] === val));
   return '<span class="seg2"><span class="thumb" style="width:calc((100% - 4px) / ' + opts.length + ');transform:translate3d(' + i * 100 + '%,0,0)"></span>' +
-    opts.map((o) => '<button data-a="seg" data-act="' + act + '" data-v="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '">' + o[1] + '</button>').join('') + '</span>';
+    opts.map((o) => '<button data-a="seg" data-act="' + act + '" data-v="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '"' + (dis ? ' disabled' : '') + '>' + o[1] + '</button>').join('') + '</span>';
 }
 const SEGACT = {
   wmode: (v) => { SET.wmode = v; S.woff = 0; save(); },
   style: (v) => { SET.style = v; save(); },
   themeset: (v) => { SET.theme = v; save(); },
   atype: (v) => { if (S.add) S.add.type = v; },
+  aspeed: (v) => { SET.anim.speed = v; save(); },
+  aease: (v) => { SET.anim.ease = v; save(); },
 };
+// Switches slide like iOS: the knob moves first, the screen updates once it lands (same timing as the toggle highlight).
+let swTimer = 0;
+function switchTap(el) {
+  if (el.disabled) return;
+  const wait = motionOff('seg') ? 0 : dms(250), kk = el.dataset.k, on = !el.classList.contains('on');
+  el.querySelector('i').style.transitionDuration = wait + 'ms';
+  el.classList.toggle('on', on); el.setAttribute('aria-checked', String(on));
+  if (kk.startsWith('area:')) SET.anim.areas[kk.slice(5)] = on; else SET.anim[kk] = on;
+  save();
+  clearTimeout(swTimer);
+  if (wait) swTimer = setTimeout(render, wait); else render();
+}
 let segTimer = 0;
 function segTap(btn) {
   if (btn.classList.contains('on')) return;
@@ -1276,9 +1313,9 @@ function segTap(btn) {
   btns.forEach((b) => b.classList.toggle('on', b === btn));
   const apply = () => { SEGACT[btn.dataset.act](btn.dataset.v); render(); };   // the screen updates once the highlight lands
   clearTimeout(segTimer);
-  if (reduceMotion()) { apply(); return; }
-  th.animate([{ transform: 'translate3d(' + from + 'px,0,0)' }, { transform: 'translate3d(' + to + 'px,0,0)' }], { duration: 300, easing: EASE_SHEET });
-  segTimer = setTimeout(apply, 300);
+  if (motionOff('seg')) { apply(); return; }
+  th.animate([{ transform: 'translate3d(' + from + 'px,0,0)' }, { transform: 'translate3d(' + to + 'px,0,0)' }], { duration: dms(300), easing: EASE_SHEET });
+  segTimer = setTimeout(apply, dms(300));
 }
 // ---------- Add leave and Change leave slide in over the Leave tab ----------
 const PUSH = { on: false, anims: [] };
@@ -1289,9 +1326,9 @@ function pushScreen() {
   pushCancel();
   push.innerHTML = '<div class="pscr">' + addHtml() + '</div>'; push.scrollTop = 0;
   push.hidden = false; shade.hidden = false; PUSH.on = true;
-  if (reduceMotion()) { shade.style.opacity = 0; return; }
+  if (motionOff('push')) { shade.style.opacity = 0; return; }
   shade.style.opacity = '';
-  const o = { duration: SHEET_MS, easing: EASE_SHEET };
+  const o = { duration: dms(SHEET_MS), easing: EASE_SHEET };
   PUSH.anims = [push.animate([{ transform: tx('100%') }, { transform: tx('0') }], o), main.animate([{ transform: tx('0') }, { transform: tx('-30%') }], { ...o, fill: 'forwards' }), shade.animate([{ opacity: 0 }, { opacity: 0.25 }], { ...o, fill: 'forwards' })];
 }
 function pushEnd() { const [push, , shade] = pushEls(); pushCancel(); push.hidden = true; shade.hidden = true; push.innerHTML = ''; }
@@ -1300,8 +1337,8 @@ function popScreen() {
   PUSH.on = false;
   const [push, main, shade] = pushEls();
   pushCancel();
-  if (reduceMotion()) { pushEnd(); return; }
-  const o = { duration: SHEET_MS, easing: EASE_SHEET, fill: 'forwards' };
+  if (motionOff('push')) { pushEnd(); return; }
+  const o = { duration: dms(SHEET_MS), easing: EASE_SHEET, fill: 'forwards' };
   const a = [push.animate([{ transform: tx('0') }, { transform: tx('100%') }], o), main.animate([{ transform: tx('-30%') }, { transform: tx('0') }], o), shade.animate([{ opacity: 0.25 }, { opacity: 0 }], o)];
   PUSH.anims = a;
   Promise.all(a.map((x) => x.finished)).then(() => { if (PUSH.anims === a && !PUSH.on) pushEnd(); }, () => {});
@@ -1320,21 +1357,21 @@ function modalSync() {
   if (!MO.key || MO.closing) {
     moCancel(); MO.closing = false; MO.dipping = false;
     moBox.className = S.imp ? '' : 'conf'; moBox.innerHTML = html; moWrap.hidden = false; moBox.scrollTop = 0;
-    if (!reduceMotion()) {
-      moDim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 250 });
-      moBox.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 300, easing: EASE_SHEET });
+    if (!motionOff('pop')) {
+      moDim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dms(250) });
+      moBox.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1)' }], { duration: dms(300), easing: EASE_SHEET });
     }
   } else if (MO.key !== key) {
     // Next step: the whole box dips out and back in, so its size change is never seen.
     MO.pending = html;
-    if (reduceMotion()) { moBox.innerHTML = html; moBox.scrollTop = 0; }
+    if (motionOff('pop')) { moBox.innerHTML = html; moBox.scrollTop = 0; }
     else if (!MO.dipping) {
       MO.dipping = true; moCancel();
-      const out = moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.97)' }], { duration: 120, easing: 'ease-in', fill: 'forwards' });
+      const out = moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.97)' }], { duration: dms(120), easing: 'ease-in', fill: 'forwards' });
       out.finished.then(() => {
         if (!MO.dipping) return;
         MO.dipping = false; moBox.innerHTML = MO.pending; moBox.scrollTop = 0; markMixed(moBox);
-        moBox.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: 220, easing: EASE_SHEET });
+        moBox.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: dms(220), easing: EASE_SHEET });
         out.cancel();
       }, () => {});
     }
@@ -1345,8 +1382,8 @@ function modalSync() {
 function modalClose() {
   MO.dipping = false; MO.closing = true; moCancel();
   const end = () => { if (!MO.closing) return; MO.closing = false; moWrap.hidden = true; moBox.innerHTML = ''; moCancel(); };
-  if (reduceMotion()) { end(); return; }
-  const a = [moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.96)' }], { duration: 200, easing: 'ease-in', fill: 'forwards' }), moDim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, fill: 'forwards' })];
+  if (motionOff('pop')) { end(); return; }
+  const a = [moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.96)' }], { duration: dms(200), easing: 'ease-in', fill: 'forwards' }), moDim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dms(220), fill: 'forwards' })];
   Promise.all(a.map((x) => x.finished)).then(end, () => {});
 }
 const markMixed = (root) => root.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
@@ -1360,7 +1397,8 @@ document.addEventListener('click', (e) => {
   const a = el.dataset.a, v = el.dataset.v, k = el.dataset.k;
   // Buttons in a sheet (or the side panel) belong to the page that is showing.
   if (el.closest('#sh, #panel')) { if (a === 'shclose') closeSheet(); else { const f = curPage() && curPage().on[a]; if (f) f(el); } return; }
-  if (a === 'seg') { segTap(el); return; }
+  if (a === 'seg') { if (!el.disabled) segTap(el); return; }
+  if (a === 'atg') { switchTap(el); return; }
   if (a === 'xtog') { xToggle(el); return; }
   if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.cf = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
   else if (a === 'yr') S.ymenu = !S.ymenu;
@@ -1421,7 +1459,12 @@ document.addEventListener('change', (e) => {
   else if (t.id === 'setCarry') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: cur.allow, carry: Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0 }; save(); render(); }
   else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
+// Swipe length slider: show the value while dragging, save when let go.
+document.addEventListener('input', (e) => { if (e.target.id === 'aswipe') { const v = e.target.value + ' ms'; ['aswv', 'aswl'].forEach((id) => { const x = document.getElementById(id); if (x) x.textContent = v; }); } });
+document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET.anim.swipe = cleanAnim({ swipe: e.target.value }).swipe; save(); } });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
+// The side panel only exists on wide screens: if the window narrows while it's open, close it so swiping isn't left blocked.
+window.addEventListener('resize', () => { if (SH.host === 'panel' && !isWide()) closeNow(); });
 window.addEventListener('resize', () => { if (SH.host !== 'sheet' || SH.state === 'closed' || SH.state === 'closing') return; shStop(); shMeasure(); shApply(SH.state === 'tall' ? 0 : SH.Tc); });
 document.getElementById('rotaFile').addEventListener('change', async (e) => {
   const f = e.target.files && e.target.files[0];
@@ -1442,9 +1485,24 @@ window.matchMedia('(min-width: 900px)').addEventListener('change', render);
 
 // ---------- swiping between weeks and months ----------
 // Only transforms are animated, so it runs on the graphics chip and costs almost nothing.
-const SNAP_MS = 900, SNAP_EASE = 'cubic-bezier(.16,1,.3,1)', GAP = 16, REEL_H = 26;
+const GAP = 16, REEL_H = 26;
+const snapMs = () => SET.anim.swipe, snapEase = () => ANIM_EASE[SET.anim.ease][1];
 let TR = null, job = null, drag = null, swallowClick = false;
-const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// ---------- animation settings (Settings → Appearance → Animations) ----------
+const ANIM_AREAS = [['swipe', 'Swipes'], ['sheet', 'Sheets'], ['pop', 'Pop-ups'], ['push', 'Add leave slide'], ['cards', 'Settings cards'], ['toast', 'Toasts'], ['seg', 'Toggle highlight']];
+const ANIM_SPEED = { relaxed: ['Relaxed', 1.3], normal: ['Normal', 1], quick: ['Quick', 0.6] };
+const ANIM_EASE = { standard: ['Standard', 'cubic-bezier(.2,.8,.2,1)'], soft: ['Soft', 'cubic-bezier(.22,1,.36,1)'], xsoft: ['Extra soft', 'cubic-bezier(.16,1,.3,1)'] };
+function cleanAnim(a) {
+  a = a && typeof a === 'object' ? a : {};
+  const areas = {}; ANIM_AREAS.forEach(([k]) => { areas[k] = !(a.areas && a.areas[k] === false); });
+  const sw = Number(a.swipe);
+  return { on: a.on !== false, speed: ANIM_SPEED[a.speed] ? a.speed : 'normal', swipe: Number.isFinite(sw) ? Math.max(450, Math.min(900, Math.round(sw / 25) * 25)) : 900, ease: ANIM_EASE[a.ease] ? a.ease : 'xsoft', areas, follow: a.follow !== false };
+}
+const sysReduce = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// All animations off: the switch is off, or "Follow iPhone Reduce Motion" is on and the iPhone has Reduce Motion on.
+const reduceMotion = () => !SET.anim.on || (SET.anim.follow && sysReduce());
+const motionOff = (area) => reduceMotion() || !SET.anim.areas[area];
+const dms = (ms) => Math.round(ms * ANIM_SPEED[SET.anim.speed][1]);   // Speed scales everything except swipes
 function bindTrack() {
   job = null;
   const scr = document.getElementById('scr'), swv = scr.querySelector('.swv');
@@ -1458,12 +1516,12 @@ function layout(p) {
   TR.rts.forEach((r) => { const d = +r.dataset.s - p; r.style.transform = 'translate3d(0,' + (d * REEL_H) + 'px,0)'; r.style.opacity = Math.max(0, 1 - Math.abs(d) * 0.85); });
 }
 function transitions(on) {
-  const t = SNAP_MS + 'ms ' + SNAP_EASE;
+  const t = snapMs() + 'ms ' + snapEase();
   TR.trk.style.transition = on ? 'transform ' + t : 'none';
   TR.rts.forEach((r) => { r.style.transition = on ? 'transform ' + t + ', opacity ' + t : 'none'; });
 }
 function run(p, dir, done) {
-  if (reduceMotion()) { layout(p); if (done) done(); return; }
+  if (motionOff('swipe')) { layout(p); if (done) done(); return; }
   void TR.trk.offsetWidth; // apply the start position before animating
   transitions(true); layout(p);
   const j = { dir, done, fin: false, timer: 0 };
@@ -1473,10 +1531,21 @@ function run(p, dir, done) {
     if (done) done(); else transitions(false);
   };
   TR.trk.addEventListener('transitionend', j.end);
-  j.timer = setTimeout(() => j.end(), SNAP_MS + 120);
+  j.timer = setTimeout(() => j.end(), snapMs() + 120);
   job = j;
 }
 // dir: 1 = next, -1 = previous, 0 = spring back. target lets ↺ land on today in one slide.
+// Month summary: update as soon as the new month is known (on release, arrow or ↺), with a quick fade.
+let sumA = null;
+function setSummary(mo) {
+  const el = document.querySelector('#scr .sum'); if (!el) return;
+  const txt = monthSummary(mo); if (el.textContent === txt) return;
+  if (sumA) sumA.cancel();
+  if (motionOff('swipe')) { el.textContent = txt; return; }
+  sumA = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 75, easing: 'ease-in', fill: 'forwards' });
+  const a = sumA;
+  a.finished.then(() => { if (sumA !== a) return; el.textContent = txt; a.cancel(); sumA = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 75, easing: 'ease-out' }); }, () => {});
+}
 function animateTo(dir, target) {
   if (!TR) return;
   if (dir === 0) { run(0, 0, null); return; }
@@ -1487,6 +1556,7 @@ function animateTo(dir, target) {
     TR.pgs[i].innerHTML = P.body(target);
     TR.rts[i].textContent = P.title(target);
   }
+  if (tab === 'month') setSummary(target);
   run(dir, dir, () => { if (S.tab === tab) { P.set(target); render(); } });
 }
 // A new swipe during a slide catches the page where it is, rather than being ignored.
@@ -1541,6 +1611,7 @@ window.addEventListener('resize', () => { if (TR && !job && !drag) layout(0); })
 
 // ---------- start ----------
 load();
+SET.anim = cleanAnim(SET.anim);
 ensureYear();
 render();
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best effort */ }

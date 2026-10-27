@@ -168,7 +168,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .it .fld.wide{width:190px;margin:0}
 .ticks{display:grid;grid-template-columns:1fr 1fr;gap:7px 10px;margin-top:8px;font-size:13px}
 .ticks label{display:flex;align-items:center;gap:6px}
-@media (prefers-reduced-motion: reduce){.chev{transition:none}}
+
 
 /* ---------- UI v2.0: Dark-first, with light version A (from rotapp-ui-v2.0.html) ---------- */
 :root{color-scheme:dark;--bg:#131416;--surface:#131416;--surface2:rgba(255,255,255,.05);--text:#F2F2F3;--text2:#c9cad0;--muted:#8e9097;--faint:#74767d;--border:rgba(255,255,255,.08);--accent:#fff;--accentbg:rgba(255,255,255,.12);--off:rgba(255,255,255,.05);--offt:#74767d;--danger:#ff7b72;
@@ -418,7 +418,7 @@ input[type=checkbox]{accent-color:var(--act)}
 .echip{display:inline-block;min-width:22px;text-align:center;border-radius:4px;padding:1px 4px;font-size:10.5px;font-weight:700}
 .echip.was{opacity:.4;text-decoration:line-through;text-decoration-thickness:1.5px}
 .edl .ar{font-size:11px;opacity:.7}
-@media (prefers-reduced-motion: reduce){.chev,.wsh .chev,.spg>.stop::after{transition:none}}
+
 .edl .undo{margin-left:6px;border:1px solid var(--border);background:var(--tile);color:var(--text);border-radius:7px;padding:3px 9px;font-size:12px;font-weight:600;line-height:1.2}
 .prow.off{opacity:.4;cursor:default}
 .prow .ns{display:block;font-size:11px;color:var(--muted);margin-top:1px}
@@ -432,3 +432,19 @@ input[type=date].fld{-webkit-appearance:none;appearance:none;display:block;width
 input[type=date].fld::-webkit-date-and-time-value{text-align:left;margin:0}
 /* Safety net for every screen. */
 html,body{overflow-x:hidden}
+
+/* ---------- 0.8.3: animation settings ---------- */
+html.noanim *,html.noanim *::after{transition:none!important}
+.asub{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:14px 0 4px;border-bottom:1px solid var(--border)}
+.aspd{flex-wrap:wrap}
+.aspd small{display:block;font-size:12px}
+.arow{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+#aswipe{width:100%;accent-color:var(--act)}
+.tg{position:relative;width:46px;height:28px;border-radius:14px;border:0;background:var(--swoff,rgba(127,127,127,.3));flex:none;padding:0}
+.tg i{position:absolute;left:2px;top:2px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .25s cubic-bezier(.32,.72,0,1)}
+.tg.on{background:#2FB866}
+.tg.on i{transform:translateX(18px)}
+.tg:disabled,.seg2 button:disabled{opacity:.4;cursor:default}
+:root{--swoff:rgba(255,255,255,.16)}
+:root[data-theme="light"]{--swoff:rgba(0,0,0,.14)}
+@media (prefers-color-scheme:light){:root[data-theme="auto"]{--swoff:rgba(0,0,0,.14)}}
