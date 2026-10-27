@@ -448,3 +448,13 @@ html.noanim *,html.noanim *::after{transition:none!important}
 :root{--swoff:rgba(255,255,255,.16)}
 :root[data-theme="light"]{--swoff:rgba(0,0,0,.14)}
 @media (prefers-color-scheme:light){:root[data-theme="auto"]{--swoff:rgba(0,0,0,.14)}}
+
+/* ---------- 0.8.6 ---------- */
+/* Add leave type: the highlight takes the type's colour and fades between colours as it slides. */
+.atype .seg2{display:grid;width:100%}
+.seg2.col .thumb{background:none;box-shadow:none}
+.seg2.col .thumb i{position:absolute;inset:0;border-radius:7px;opacity:0;transition:opacity .3s cubic-bezier(.32,.72,0,1)}
+.seg2.col .thumb i.on{opacity:1}
+/* No zooming: no double-tap zoom, and fields are at least 16px so iPhone doesn't zoom in when one is tapped. */
+html{touch-action:manipulation}
+input,select,textarea,.sel,.fld{font-size:16px}

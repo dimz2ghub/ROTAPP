@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.8.5 prototype';
+const VERSION = '0.8.6 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -211,7 +211,21 @@ function weekStart(off) {
   return SET.wmode === 'cal' ? addDays(b, -((b.getDay() + 6) % 7)) : b;
 }
 // Plain refresh symbol (anticlockwise) between the left chevron and the title; shows from two steps away.
-const refreshBtn = (off) => (Math.abs(off) > 0 ? '<button class="refresh" data-a="today" aria-label="Jump to today">↺</button>' : '');
+const refreshBtn = (off) => '<button class="refresh" data-a="today" aria-label="Jump to today"' + (off ? '' : ' style="visibility:hidden" aria-hidden="true" tabindex="-1"') + '>↺</button>';
+// ↺ shows whenever you're away from today; it updates as soon as the destination is known, not after the slide.
+let refA = null;
+function setRefresh(target) {
+  const b = document.querySelector('#scr .refresh'); if (!b) return;
+  const show = target !== 0, shown = b.style.visibility !== 'hidden';
+  if (show === shown) return;
+  if (refA) { refA.cancel(); refA = null; }
+  if (show) { b.style.visibility = ''; b.removeAttribute('aria-hidden'); b.removeAttribute('tabindex'); }
+  else { b.setAttribute('aria-hidden', 'true'); b.tabIndex = -1; }
+  if (motionOff('swipe')) { if (!show) b.style.visibility = 'hidden'; return; }
+  const a = b.animate(show ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 1 }, { opacity: 0 }], { duration: 150, fill: 'forwards' });
+  refA = a;
+  a.finished.then(() => { if (refA !== a) return; refA = null; if (!show) b.style.visibility = 'hidden'; a.cancel(); }, () => {});
+}
 function weekTitle(off) { const s = weekStart(off); return lab(s, addDays(s, 6)); }
 function weekBody(off) {
   const s = weekStart(off), tk = ymd(today()), DD = shown();
@@ -307,7 +321,7 @@ function addHtml() {
   // when editing, the old range is released first, so it does not count as used
   let usedH = c.H;
   if (A.edit && A.edit.t === 'H') usedH -= A.edit.n;
-  let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="atype">' + segHtml('atype', [['H', 'Holiday'], ['S', 'Sick'], ['C', 'C']], A.type) + '</div>';
+  let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="atype">' + segHtml('atype', [['H', 'Holiday'], ['S', 'Sick'], ['C', 'C']], A.type, false, true) + '</div>';
   h += '<label class="k" for="aStart">Start date</label><input class="fld" id="aStart" type="date" value="' + A.start + '"><label class="k" for="aEnd">End date</label><input class="fld" id="aEnd" type="date" value="' + A.end + '">';
   const f = new Date(a.getFullYear(), a.getMonth(), 1), dim = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
   h += '<div class="k" style="margin-top:6px;text-align:center"><b>' + MF[f.getMonth()] + ' ' + f.getFullYear() + '</b></div><div class="g" style="margin-top:4px">';
@@ -1278,10 +1292,12 @@ function toast(msg) {
   toastT = setTimeout(() => { toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: dms(220), easing: 'ease-in', fill: 'forwards' }); }, 1800);
 }
 // ---------- segmented controls: the highlight slides; labels switch at once ----------
-function segHtml(act, opts, val, dis) {
+// col: the highlight takes each option's shift colour, fading between colours as it slides (Add leave type).
+function segHtml(act, opts, val, dis, col) {
   const i = Math.max(0, opts.findIndex((o) => o[0] === val));
-  return '<span class="seg2"><span class="thumb" style="width:calc((100% - 4px) / ' + opts.length + ');transform:translate3d(' + i * 100 + '%,0,0)"></span>' +
-    opts.map((o) => '<button data-a="seg" data-act="' + act + '" data-v="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '"' + (dis ? ' disabled' : '') + '>' + o[1] + '</button>').join('') + '</span>';
+  const layers = col ? opts.map((o) => '<i data-l="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '" style="background:' + T[o[0]].bg + '"></i>').join('') : '';
+  return '<span class="seg2' + (col ? ' col' : '') + '"><span class="thumb" style="width:calc((100% - 4px) / ' + opts.length + ');transform:translate3d(' + i * 100 + '%,0,0)">' + layers + '</span>' +
+    opts.map((o) => '<button data-a="seg" data-act="' + act + '" data-v="' + o[0] + '" class="' + (o[0] === val ? 'on' : '') + '"' + (dis ? ' disabled' : '') + (col && o[0] === val ? ' style="color:' + T[o[0]].fg + '"' : '') + '>' + o[1] + '</button>').join('') + '</span>';
 }
 const SEGACT = {
   wmode: (v) => { SET.wmode = v; S.woff = 0; save(); },
@@ -1311,6 +1327,10 @@ function segTap(btn) {
   th.getAnimations().forEach((a) => a.cancel());
   th.style.transform = 'translate3d(' + to + 'px,0,0)';
   btns.forEach((b) => b.classList.toggle('on', b === btn));
+  if (seg.classList.contains('col')) {
+    btns.forEach((b) => { b.style.color = b === btn ? T[btn.dataset.v].fg : ''; });
+    th.querySelectorAll('i').forEach((l) => { l.style.transitionDuration = (motionOff('seg') ? 0 : dms(300)) + 'ms'; l.classList.toggle('on', l.dataset.l === btn.dataset.v); });
+  }
   const apply = () => { SEGACT[btn.dataset.act](btn.dataset.v); render(); };   // the screen updates once the highlight lands
   clearTimeout(segTimer);
   if (motionOff('seg')) { apply(); return; }
@@ -1404,7 +1424,7 @@ document.addEventListener('click', (e) => {
   else if (a === 'yr') S.ymenu = !S.ymenu;
   else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; }
   else if (a === 'showme') { SET.showing = null; save(); }
-  else if (a === 'ppopen') { openSheet(pickerPage(), { peek: 260 }); return; }
+  else if (a === 'ppopen') { openSheet(pickerPage(), { peek: 260, toTitle: true }); return; }
   else if (a === 'bhsheet') { openSheet(bhPage(), { peek: 220 }); return; }
   else if (a === 'rmask') S.rm = v;
   else if (a === 'rmno') S.rm = null;
@@ -1462,6 +1482,8 @@ document.addEventListener('change', (e) => {
 // Swipe length slider: show the value while dragging, save when let go.
 document.addEventListener('input', (e) => { if (e.target.id === 'aswipe') { const v = e.target.value + ' ms'; ['aswv', 'aswl'].forEach((id) => { const x = document.getElementById(id); if (x) x.textContent = v; }); } });
 document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET.anim.swipe = cleanAnim({ swipe: e.target.value }).swipe; save(); } });
+// No zooming: iPhone pinch gestures are blocked (double-tap zoom is off via CSS touch-action).
+['gesturestart', 'gesturechange', 'gestureend'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
 // The side panel only exists on wide screens: if the window narrows while it's open, close it so swiping isn't left blocked.
 window.addEventListener('resize', () => { if (SH.host === 'panel' && !isWide()) closeNow(); });
@@ -1557,6 +1579,7 @@ function animateTo(dir, target) {
     TR.rts[i].textContent = P.title(target);
   }
   if (tab === 'month') setSummary(target);
+  setRefresh(target);
   run(dir, dir, () => { if (S.tab === tab) { P.set(target); render(); } });
 }
 // A new swipe during a slide catches the page where it is, rather than being ignored.

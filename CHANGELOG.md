@@ -2,6 +2,12 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8.6 — 27 Oct 2026
+- Add leave: the Type control's sliding highlight now fades into the type's colour (Holiday yellow, Sick pink, C tan), with the label in that type's text colour.
+- No zooming: pinch, double-tap and the automatic zoom when tapping a field are all off (fields now use 16 px text).
+- "Show rota for" picker opens to the same height as the day editor, just under the month/week title.
+- ↺ (jump to today) fades out the moment it's tapped, and appears or disappears as soon as the target month or week is known on swipes and arrow taps, instead of after the slide.
+
 ## 0.8.5 — 27 Oct 2026
 - Bug sweep (phone at 320 and 390 px, light and dark, desktop): fresh install, PDF and xlsx import, every tab, every Settings card and row, day editor, swap steps, leave sheets, Add leave, viewing and removing people, backup round-trip, Escape, rapid month swipes. No sideways overflow anywhere.
 - Fixed: on desktop, if the window was narrowed to phone width while the day editor was open in the side panel, the panel vanished but swiping stayed blocked.
