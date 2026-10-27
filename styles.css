@@ -458,3 +458,7 @@ html.noanim *,html.noanim *::after{transition:none!important}
 /* No zooming: no double-tap zoom, and fields are at least 16px so iPhone doesn't zoom in when one is tapped. */
 html{touch-action:manipulation}
 input,select,textarea,.sel,.fld{font-size:16px}
+
+/* ---------- 0.8.7 ---------- */
+html,body{overflow:hidden;overscroll-behavior:none}
+#main,#push{overscroll-behavior-y:contain}

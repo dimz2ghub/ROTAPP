@@ -2,6 +2,11 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.8.7 — 27 Oct 2026
+- No page bounce: screens that fit on one screen no longer drag up and down. Long screens (such as Settings with cards open) still scroll and keep the bounce at their ends.
+- Changes happen on tap: sliding controls (Add leave type, Week view, Style, Theme, Speed, Ease) and animation switches update the screen straight away with a quick fade, while the highlight or knob is still sliding (was after it landed).
+- The same quick fade when the screen changes after: Done in the day editor, confirming a swap, undoing a change or swap, choosing whose rota to show, saving or deleting leave, and removing a person.
+
 ## 0.8.6 — 27 Oct 2026
 - Add leave: the Type control's sliding highlight now fades into the type's colour (Holiday yellow, Sick pink, C tan), with the label in that type's text colour.
 - No zooming: pinch, double-tap and the automatic zoom when tapping a field are all off (fields now use 16 px text).

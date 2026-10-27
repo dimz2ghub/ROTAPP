@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.8.6 prototype';
+const VERSION = '0.8.7 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -367,7 +367,7 @@ const SICON = {
 // Person picker: Back to me, then everyone grouped by office, filtered by the search box.
 function pickerPage() {
   const pg = makePage({ top: '<div class="pph2"><b>Show rota for</b><button data-a="close">Done</button></div><label class="srch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input id="ppq" type="search" placeholder="Search names" autocomplete="off" autocorrect="off" spellcheck="false"></label>', scroll: ppListHtml(''), label: 'Show rota for' });
-  pg.on = { close: closeSheet, pppick: (el) => { SET.showing = el.dataset.v || null; tidyShowing(); save(); render(); closeSheet(); } };
+  pg.on = { close: closeSheet, pppick: (el) => { SET.showing = el.dataset.v || null; tidyShowing(); save(); renderFade(null, 'sheet'); closeSheet(); } };
   const inp = pg.top.querySelector('input');
   inp.addEventListener('input', () => { pg.inner.innerHTML = ppListHtml(inp.value); });
   inp.addEventListener('focus', () => { if (SH.state === 'normal') shExpand(); });   // tapping the search box expands it to tall
@@ -746,6 +746,7 @@ function toggleSection(btn, root) {
 function undoChange(k) {
   const n = NOTES[ME_KEY] && NOTES[ME_KEY][k];
   if (!n) return;
+  let msg;
   if (n.kind === 'swap') {
     const mine = NOTES[ME_KEY], days = Object.keys(mine).filter((x) => mine[x].kind === 'swap' && (x === k || (n.id && mine[x].id === n.id)));
     const p = TEAM.people[n.with], theirs = NOTES[n.with] || {};
@@ -755,9 +756,9 @@ function undoChange(k) {
       const t = theirs[x];
       if (p && t && t.kind === 'swap' && (!n.id || t.id === n.id)) { p.d[x] = t.was; clearNote(n.with, x); }
     });
-    toast('Swap with ' + firstName(n.with) + ' undone');
-  } else { D[k] = n.was; clearNote(ME_KEY, k); toast('Change undone'); }
-  save(); render();
+    msg = 'Swap with ' + firstName(n.with) + ' undone';
+  } else { D[k] = n.was; clearNote(ME_KEY, k); msg = 'Change undone'; }
+  save(); renderFade(null, 'sheet'); toast(msg);
 }
 function askUndo(k) {
   const n = NOTES[ME_KEY] && NOTES[ME_KEY][k]; if (!n) return;
@@ -805,7 +806,7 @@ function editorPage(k) {
   const pg = makePage({ top: topHtml(), scroll: whoOnHtml(k), bar: [['Cancel', 'cancel'], ['Done', 'done', 1]], label: 'Day editor' });
   pg.on = {
     cancel: closeSheet,
-    done: () => { if (pick && pick !== cur) { markChange(ME_KEY, k, cur, pick, 'edit'); D[k] = pick; save(); render(); } closeSheet(); },
+    done: () => { if (pick && pick !== cur) { markChange(ME_KEY, k, cur, pick, 'edit'); D[k] = pick; save(); renderFade(null, 'sheet'); } closeSheet(); },
     // The selection outline moves instantly between tiles.
     pick: (el) => {
       pick = el.dataset.v;
@@ -930,7 +931,7 @@ function applySwap(k, who, their) {
     if (b) D[x] = b; else delete D[x];
     if (a) other[x] = a; else delete other[x];
   });
-  save(); render(); closeSheet();
+  save(); renderFade(null, 'sheet'); closeSheet();
   toast('Swapped with ' + who);
 }
 function bhPage() {
@@ -957,7 +958,7 @@ function runPage(r) {
     runedit: () => { closeSheet(); S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r }; pushScreen(); },
     rundel: () => {
       for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { D[k] = 'O'; clearNote(ME_KEY, k); } }
-      save(); closeSheet(); toast('Leave deleted');
+      save(); renderFade(null, 'sheet'); closeSheet(); toast('Leave deleted');
     },
   };
   return pg;
@@ -1259,6 +1260,30 @@ function render() {
   rendering = true;
   try { renderNow(); } finally { rendering = false; }
 }
+// Change on tap: redraw straight away and fade in only what changed. keep (a selector) marks the control that was tapped,
+// which is left alone so its own slide carries on. Runtime motion styles are ignored when comparing.
+let skipToastRender = false;
+const sameHtml = (a, b) => { const n = (x) => x.outerHTML.replace(/(transform|opacity|visibility|transition[\w-]*)\s*:[^;"]*;?/g, ''); return n(a) === n(b); };
+function renderFade(keep, area) {
+  const roots = () => [document.getElementById('scr'), PUSH.on && S.add ? document.querySelector('#push .pscr') : null];
+  const before = roots().map((r) => r && r.cloneNode(true));
+  render();
+  skipToastRender = true; queueMicrotask(() => { skipToastRender = false; });
+  if (motionOff(area)) return;
+  const fade = [];
+  const walk = (o, n) => {
+    const oc = o.children, nc = n.children;
+    for (let i = 0; i < nc.length; i++) {
+      const b = nc[i], a = oc[i];
+      if (keep && b.matches(keep)) continue;
+      if (a && a.tagName === b.tagName && sameHtml(a, b)) continue;
+      if (keep && a && b.querySelector(keep)) { walk(a, b); continue; }
+      fade.push(b);
+    }
+  };
+  roots().forEach((r, i) => { if (r && before[i]) walk(before[i], r); });
+  fade.forEach((el) => el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' }));
+}
 function renderNow() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
@@ -1281,7 +1306,7 @@ function renderNow() {
 // ---------- toasts: drop in from the top, then fade away ----------
 let toastT = 0, toastA = null;
 function toast(msg) {
-  render();
+  if (!skipToastRender) render();
   const t = document.getElementById('toast');
   t.textContent = msg;
   if (toastA) toastA.cancel();
@@ -1307,35 +1332,38 @@ const SEGACT = {
   aspeed: (v) => { SET.anim.speed = v; save(); },
   aease: (v) => { SET.anim.ease = v; save(); },
 };
-// Switches slide like iOS: the knob moves first, the screen updates once it lands (same timing as the toggle highlight).
-let swTimer = 0;
+// Switches slide like iOS. The screen changes on tap (with a quick fade) while the knob slides in the redrawn switch.
 function switchTap(el) {
   if (el.disabled) return;
-  const wait = motionOff('seg') ? 0 : dms(250), kk = el.dataset.k, on = !el.classList.contains('on');
-  el.querySelector('i').style.transitionDuration = wait + 'ms';
-  el.classList.toggle('on', on); el.setAttribute('aria-checked', String(on));
+  const ms = motionOff('seg') ? 0 : dms(250), kk = el.dataset.k, on = !el.classList.contains('on');
+  const from = getComputedStyle(el.querySelector('i')).transform;
   if (kk.startsWith('area:')) SET.anim.areas[kk.slice(5)] = on; else SET.anim[kk] = on;
   save();
-  clearTimeout(swTimer);
-  if (wait) swTimer = setTimeout(render, wait); else render();
+  const sel = '.tg[data-k="' + kk + '"]';
+  renderFade(sel, 'seg');
+  const k = document.querySelector(sel + ' i'); if (!k || !ms) return;
+  k.style.transition = 'none';
+  const to = getComputedStyle(k).transform;
+  k.animate([{ transform: from === 'none' ? 'translateX(0)' : from }, { transform: to === 'none' ? 'translateX(0)' : to }], { duration: ms, easing: EASE_SHEET });
 }
-let segTimer = 0;
 function segTap(btn) {
   if (btn.classList.contains('on')) return;
   const seg = btn.closest('.seg2'), btns = [...seg.querySelectorAll('button')], i = btns.indexOf(btn), th = seg.querySelector('.thumb');
   const from = new DOMMatrixReadOnly(getComputedStyle(th).transform).m41, to = i * th.offsetWidth;
-  th.getAnimations().forEach((a) => a.cancel());
-  th.style.transform = 'translate3d(' + to + 'px,0,0)';
-  btns.forEach((b) => b.classList.toggle('on', b === btn));
-  if (seg.classList.contains('col')) {
-    btns.forEach((b) => { b.style.color = b === btn ? T[btn.dataset.v].fg : ''; });
-    th.querySelectorAll('i').forEach((l) => { l.style.transitionDuration = (motionOff('seg') ? 0 : dms(300)) + 'ms'; l.classList.toggle('on', l.dataset.l === btn.dataset.v); });
-  }
-  const apply = () => { SEGACT[btn.dataset.act](btn.dataset.v); render(); };   // the screen updates once the highlight lands
-  clearTimeout(segTimer);
-  if (motionOff('seg')) { apply(); return; }
-  th.animate([{ transform: 'translate3d(' + from + 'px,0,0)' }, { transform: 'translate3d(' + to + 'px,0,0)' }], { duration: dms(300), easing: EASE_SHEET });
-  segTimer = setTimeout(apply, dms(300));
+  // The screen changes now (with a quick fade); the highlight carries on sliding in the redrawn control.
+  const act = btn.dataset.act, v = btn.dataset.v, ops = {};
+  th.querySelectorAll('i').forEach((l) => { ops[l.dataset.l] = +getComputedStyle(l).opacity; });
+  SEGACT[act](v);
+  const sel = '.seg2:has(> [data-act="' + act + '"])';
+  renderFade(sel, 'seg');
+  const ns = document.querySelector(sel); if (!ns || motionOff('seg')) return;
+  const nt = ns.querySelector('.thumb'), o = { duration: dms(300), easing: EASE_SHEET };
+  nt.style.transform = 'translate3d(' + to + 'px,0,0)';
+  nt.animate([{ transform: 'translate3d(' + from + 'px,0,0)' }, { transform: 'translate3d(' + to + 'px,0,0)' }], o);
+  if (ns.classList.contains('col')) nt.querySelectorAll('i').forEach((l) => {
+    const op = ops[l.dataset.l] || 0;
+    const end = l.dataset.l === v ? 1 : 0; if (op !== end) l.animate([{ opacity: op }, { opacity: end }], o);
+  });
 }
 // ---------- Add leave and Change leave slide in over the Leave tab ----------
 const PUSH = { on: false, anims: [] };
@@ -1430,7 +1458,7 @@ document.addEventListener('click', (e) => {
   else if (a === 'rmno') S.rm = null;
   else if (a === 'cfno') S.cf = null;
   else if (a === 'cfyes') { const k2 = S.cf.k; S.cf = null; closeSheet(); undoChange(k2); return; }
-  else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); toast(n + ' removed'); return; }
+  else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); renderFade(null, 'pop'); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
@@ -1446,7 +1474,7 @@ document.addEventListener('click', (e) => {
     // Leave gets no note, and clears any note on the days it writes.
     if (A.edit) for (let d = A.edit.s; d <= A.edit.e; d = addDays(d, 1)) if (D[ymd(d)] === A.edit.t) { D[ymd(d)] = 'O'; clearNote(ME_KEY, ymd(d)); }
     weekdaysIn(s, en).forEach((d) => { D[ymd(d)] = A.type; clearNote(ME_KEY, ymd(d)); });
-    save(); S.add = null; render(); popScreen(); return;
+    save(); S.add = null; renderFade(null, 'push'); popScreen(); return;
   }
   else if (a === 'run') { openSheet(runPage(leaveRuns(leaveYear())[+v]), { panel: true, expandable: false }); return; }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
@@ -1484,6 +1512,9 @@ document.addEventListener('input', (e) => { if (e.target.id === 'aswipe') { cons
 document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET.anim.swipe = cleanAnim({ swipe: e.target.value }).swipe; save(); } });
 // No zooming: iPhone pinch gestures are blocked (double-tap zoom is off via CSS touch-action).
 ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+// No page bounce: a drag only moves something that can actually scroll (long screens keep their bounce at the ends).
+const canScroll = (el) => { for (; el && el !== document.body; el = el.parentElement) { if (el.scrollHeight > el.clientHeight + 1) { const o = getComputedStyle(el).overflowY; if (o === 'auto' || o === 'scroll') return true; } } return false; };
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || e.target.closest('input,textarea,select')) return; if (!canScroll(e.target)) e.preventDefault(); }, { passive: false });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
 // The side panel only exists on wide screens: if the window narrows while it's open, close it so swiping isn't left blocked.
 window.addEventListener('resize', () => { if (SH.host === 'panel' && !isWide()) closeNow(); });
