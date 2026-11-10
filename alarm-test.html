@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Alarm test">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Alarm test</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{overflow-x:hidden;overscroll-behavior:none}
+body{margin:0;background:#131416;color:#F2F2F3;font:15px/1.45 -apple-system,BlinkMacSystemFont,sans-serif;padding:calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px)}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:15px;margin:18px 0 6px}
+p,li{color:#c9cad0;font-size:14px}
+ol{padding-left:20px;margin:6px 0}
+li{margin:4px 0}
+.card{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;margin-top:10px}
+button{display:block;width:100%;border:0;border-radius:11px;padding:13px;font:inherit;font-weight:700;margin-top:8px;background:#F2F2F3;color:#131416}
+button.sec{background:rgba(255,255,255,.1);color:#F2F2F3}
+.mode{font-size:13px;color:#8e9097}
+.ok{color:#2FB866}.bad{color:#FF7AA8}
+#log{font:12px/1.5 ui-monospace,Menlo,monospace;color:#c9cad0;white-space:pre-wrap;word-break:break-word}
+code{background:rgba(255,255,255,.08);border-radius:5px;padding:1px 5px;font-size:13px}
+</style>
+</head>
+<body>
+<h1>Alarm hand-over test</h1>
+<div class="mode" id="mode"></div>
+
+<div class="card">
+  <b>Before you start (once)</b>
+  <ol>
+    <li>Open <b>Shortcuts</b>, tap <b>+</b>, name it exactly <code>Rotapp test</code>.</li>
+    <li>Add the action <b>Show Result</b>, and set what it shows to <b>Shortcut Input</b>.</li>
+    <li>Open this page in Safari, tap Share › <b>Add to Home Screen</b>, then open <b>Alarm test</b> from your home screen (so it behaves like Rotapp).</li>
+  </ol>
+</div>
+
+<h2>Tests</h2>
+<p>Each one sends a fake 3-month alarm schedule (dates and times only) to the "Rotapp test" shortcut, which should show it. Then come back here and the page notes how you got back and how long it took.</p>
+<button id="t1">1. Hand over (on tap)</button>
+<button id="t2" class="sec">2. Hand over by itself, 3 s after tapping</button>
+<button id="t3" class="sec">3. Hand over with "return to page" link</button>
+<p class="mode">1 = how B (button) feels. 2 = how A (automatic) feels when Rotapp starts it without a direct tap. 3 = asks Shortcuts to bring you back automatically; see whether it returns to this home-screen app or to Safari.</p>
+
+<h2>What to tell me</h2>
+<ol>
+  <li>Did iPhone ask "Open in Shortcuts?" (or similar)? Every time, or only the first?</li>
+  <li>Did the shortcut show the schedule text?</li>
+  <li>How did you get back: "◀ Alarm test" top-left, swiping, or automatically (test 3)? Did test 3 land here or in Safari?</li>
+  <li>Did test 2 work at all?</li>
+</ol>
+
+<div class="card"><b>Log</b> <span class="mode">(kept on this phone only)</span><div id="log"></div><button class="sec" id="clr">Clear log</button></div>
+
+<script>
+const standalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+document.getElementById('mode').innerHTML = standalone ? '<span class="ok">Running as a home-screen app ✓</span>' : '<span class="bad">Running in Safari: add it to your home screen for a fair test</span>';
+const K = 'alarmtest.log';
+const read = () => { try { return JSON.parse(localStorage.getItem(K)) || []; } catch (e) { return []; } };
+const write = (l) => { try { localStorage.setItem(K, JSON.stringify(l.slice(-30))); } catch (e) {} };
+const log = (m) => { const l = read(); l.push(new Date().toLocaleTimeString('en-GB') + '  ' + m); write(l); show(); };
+const show = () => { document.getElementById('log').textContent = read().join('\n') || '(empty)'; };
+// Fake schedule: next 90 days, weekdays only, example times. No personal data.
+function payload() {
+  const out = [], d = new Date();
+  for (let i = 1; i <= 90; i++) {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate() + i);
+    if (x.getDay() === 0 || x.getDay() === 6) continue;
+    const iso = x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+    out.push(iso + ' 06:00 Rotapp · M office', iso + ' 06:10 Rotapp · M office');
+  }
+  return 'ROTAPP-ALARMS v1\n' + out.join('\n');
+}
+let left = 0;
+function go(kind) {
+  const text = payload(), name = encodeURIComponent('Rotapp test'), t = encodeURIComponent(text);
+  const back = encodeURIComponent(location.href.split('#')[0] + '#back');
+  const url = kind === 3
+    ? 'shortcuts://x-callback-url/run-shortcut?name=' + name + '&input=text&text=' + t + '&x-success=' + back + '&x-cancel=' + back
+    : 'shortcuts://run-shortcut?name=' + name + '&input=text&text=' + t;
+  left = Date.now();
+  try { sessionStorage.setItem('left', String(left)); } catch (e) {}
+  log('Test ' + kind + ': handing over ' + (text.length / 1024).toFixed(1) + ' KB, ' + (text.split('\n').length - 1) + ' alarms (' + (standalone ? 'home-screen app' : 'Safari') + ')');
+  location.href = url;
+  setTimeout(() => { if (!document.hidden) log('Test ' + kind + ': still on this page after 2 s (blocked, prompt shown, or dismissed?)'); }, 2000);
+}
+document.getElementById('t1').onclick = () => go(1);
+document.getElementById('t2').onclick = () => { log('Test 2: waiting 3 s…'); setTimeout(() => go(2), 3000); };
+document.getElementById('t3').onclick = () => go(3);
+document.getElementById('clr').onclick = () => { write([]); show(); };
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { log('Left this page'); return; }
+  const l = left || +(sessionStorage.getItem('left') || 0);
+  log('Back on this page' + (l ? ' after ' + ((Date.now() - l) / 1000).toFixed(1) + ' s' : ''));
+});
+if (location.hash === '#back') log('Opened via the return link (' + (standalone ? 'home-screen app' : 'Safari') + ')');
+show();
+</script>
+</body>
+</html>
