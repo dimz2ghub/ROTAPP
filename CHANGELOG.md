@@ -2,6 +2,17 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.9 — 10 Nov 2026
+- Office days: an Office pill at the top right of the day editor on weekday M shifts. Every M starts as a home day; office days are only ever set by hand.
+- Alarms (optional, off until you turn on "Use alarms" in Settings › Alarms):
+  - Alarms per shift type, only for the types in your rota (no Off, leave, sick or PH); M office has its own list. Each type and each alarm has its own switch.
+  - Tap an alarm to edit it in a pop-up with scroll wheels: a fixed time (the default) or a time before the shift starts.
+  - Day editor: a slim Alarms dropdown above Who's on, closed to start. Changes there affect that day only, with Reset; changed days keep their own alarms.
+  - Update alarms hands the rest of this week plus next week to the "Rotapp save" shortcut. An evening Shortcuts automation ("Rotapp alarms") sets the alarms due in the next 24 hours and warns when the schedule is about to run out.
+  - "Update alarms automatically" (off to start) with "Confirm with": Pop-up, Banner or Warning. An out-of-date hint and the Update alarms button always show.
+  - "Set up on iPhone": step-by-step guide to build both shortcuts and the automation.
+- Saved data moves to version 3 (office days and per-day alarms); older data upgrades automatically and backups include the new parts.
+
 ## 0.8.7 — 27 Oct 2026
 - No page bounce: screens that fit on one screen no longer drag up and down. Long screens (such as Settings with cards open) still scroll and keep the bounce at their ends.
 - Changes happen on tap: sliding controls (Add leave type, Week view, Style, Theme, Speed, Ease) and animation switches update the screen straight away with a quick fade, while the highlight or knob is still sliding (was after it landed).
