@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.9 prototype';
+const VERSION = '0.9.2 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -34,7 +34,7 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [], anim: null, alarm: null };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [], anim: null };
 // Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
 let TEAM = { people: {}, groups: [], latest: [], seen: {} };
 let canSave = true;
@@ -47,13 +47,12 @@ function load() {
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
     NOTES = cleanNotes(d && d.notes);
-    OFFICE = cleanOffice(d && d.office); DAYAL = cleanDayAl(d && d.dayal);
+    OFFICE = cleanOffice(d && d.office);
     if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [], latest: d.team.latest || latestFromGroups(d.team.groups || []), seen: d.team.seen || {} };
     // 0.5 kept one allowance; from 0.6 each year has its own.
     if (!SET.years || typeof SET.years !== 'object') SET.years = {};
     if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry || 0 };
     SET.anim = cleanAnim(SET.anim);
-    SET.alarm = cleanAlarm(SET.alarm);
     if (!Array.isArray(SET.whoOff)) SET.whoOff = [];
     if (!Array.isArray(SET.whoHide)) SET.whoHide = [];
     tidyShowing();
@@ -61,7 +60,7 @@ function load() {
 }
 function save() {
   pruneDays();
-  try { localStorage.setItem(KEY, JSON.stringify({ v: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE, dayal: DAYAL })); canSave = true; }
+  try { localStorage.setItem(KEY, JSON.stringify({ v: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE })); canSave = true; }
   catch (e) { canSave = false; }
 }
 
@@ -124,8 +123,8 @@ const isWide = () => window.matchMedia('(min-width: 900px)').matches;
 // ---------- state ----------
 const S = {
   tab: 'month', woff: 0, moff: 0, sheet: null, pick: null, more: false, showPast: false,
-  add: null, imp: null, card: null, nest: { ppl: false, swap: false, who: false, alguide: false }, wOff: new Set(),
-  revHold: {}, aled: null, alAsk: false, alSnooze: null, alTouched: false, de: null,
+  add: null, imp: null, card: null, nest: { ppl: false, swap: false, who: false }, wOff: new Set(),
+  de: null,
 };
 
 // ---------- leave maths ----------
@@ -365,7 +364,6 @@ const SICON = {
   rota: ['#00A36C', '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>'],
   look: ['#8E5CC9', '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor"/>'],
   people: ['#5C6B80', '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>'],
-  alarm: ['#E5484D', '<circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 2M5 4 2.5 6.5M19 4l2.5 2.5"/>'],
   leave: ['#E8A317', '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'],
 };
 // Person picker sheet: Back to me, then everyone grouped by office, filtered by the search box.
@@ -425,7 +423,6 @@ function settingsHtml() {
   const pb = peopleHtml();
   if (pb) rb += nestRow('ppl', 'People', pb.sum, pb.body);
   h += card('rota', 'Rota', 'Showing ' + esc(showingName) + ' · ' + (SET.wmode === 'cal' ? 'Mon – Sun' : 'Next 7 days'), rb);
-  h += card('alarm', 'Alarms', alarmSummary(), alarmSettingsHtml());
 
   // Appearance
   const sty = { A: 'Filled', B: 'Badge', C: 'Dot' }, th = { auto: 'Auto', light: 'Light', dark: 'Dark' };
@@ -785,7 +782,7 @@ function editLine(k, cur) {
 function editorPage(k) {
   let pick = null, more = false, warn = '';
   const cur = D[k], d = pk(k), weekend = d.getDay() === 0 || d.getDay() === 6;
-  S.de = { k, pick: null, office: !!OFFICE[k], al: DAYAL[k] ? { ty: DAYAL[k].ty, list: copyList(DAYAL[k].list) } : null, open: false, touched: false };
+  S.de = { k, pick: null, office: !!OFFICE[k] };
   // Same warnings as Add leave when a single day takes Holiday over, or C below zero (you can still save).
   const warnHtml = () => {
     if (!pick || pick === cur || (pick !== 'H' && pick !== 'C')) return '';
@@ -804,55 +801,33 @@ function editorPage(k) {
   const topHtml = () => {
     warn = warnHtml();
     const c = pick || cur;
-    let h = '<div class="alw"' + (deWarn() ? '' : ' hidden') + '>⏰ Done will update your alarms (opens Shortcuts)</div>';
-    h += '<div class="ehr"><div class="eh">' + longDate(k) + ' <small>· ' + (cur ? T[cur].n : 'No shift') + (cur && TIMES[cur] ? ' · ' + TIMES[cur] : '') + '</small></div><span class="opw">' + (canOffice(k, c) ? '<button class="opill' + (S.de.office ? ' on' : '') + '" data-a="office" aria-pressed="' + S.de.office + '">Office</button>' : '') + '</span></div>' + editLine(k, cur);
+    let h = '<div class="ehr"><div class="eh">' + longDate(k) + ' <small>· ' + (cur ? T[cur].n : 'No shift') + (cur && TIMES[cur] ? ' · ' + TIMES[cur] : '') + '</small></div><span class="opw">' + (canOffice(k, c) ? '<button class="opill' + (S.de.office ? ' on' : '') + '" data-a="office" aria-pressed="' + S.de.office + '">Office</button>' : '') + '</span></div>' + editLine(k, cur);
     h += '<div class="tiles">' + (more ? COMMON.concat(MORE) : COMMON).map(tile).join('') + '</div>';
     h += '<button class="mrow" data-a="more">' + (more ? 'Fewer types ▴' : 'More types ▾') + '</button><div class="dwarn">' + warn + '</div>';
     const why = swapBlocked(k);
     h += why ? '<button class="swapbtn" disabled>⇄ Swap with someone</button><div class="k" style="text-align:center;margin-top:4px">' + why + '</div>' : '<button class="swapbtn" data-a="swap">⇄ Swap with someone</button>';
     return h;
   };
-  const pg = makePage({ top: topHtml(), scroll: '<div class="dal">' + dalHtml() + '</div>' + whoOnHtml(k), bar: [['Cancel', 'cancel'], ['Done', 'done', 1]], label: 'Day editor' });
+  const pg = makePage({ top: topHtml(), scroll: whoOnHtml(k), bar: [['Cancel', 'cancel'], ['Done', 'done', 1]], label: 'Day editor' });
   pg.on = {
     cancel: closeSheet,
-    // Done saves the shift, the office mark and this day's own alarms together. Office days are only ever set here.
+    // Done saves the shift and the office mark together. Office days are only ever set here.
     done: () => {
-      const de = S.de, fin = pick || cur, shift = !!(pick && pick !== cur), warned = deWarn();
+      const fin = pick || cur, shift = !!(pick && pick !== cur), off = !!(S.de.office && canOffice(k, fin)), offChanged = off !== !!OFFICE[k];
       if (shift) { markChange(ME_KEY, k, cur, pick, 'edit'); D[k] = pick; }
-      if (de.office && canOffice(k, fin)) OFFICE[k] = 1; else delete OFFICE[k];
-      const ty = alKey(k, fin, OFFICE[k]);
-      if (de.al && de.al.ty === ty && !sameList(de.al.list, baseList(ty))) DAYAL[k] = { ty, list: de.al.list }; else delete DAYAL[k];
-      const any = shift || de.touched;
-      if (any) { save(); renderFade(null, 'sheet'); }
+      if (off) OFFICE[k] = 1; else delete OFFICE[k];
+      if (shift || offChanged) { save(); renderFade(null, 'sheet'); }
       closeSheet();
-      if (any) alarmCheck(warned ? 'done' : 'change');
     },
     // The selection outline moves instantly between tiles.
     pick: (el) => {
       pick = el.dataset.v; S.de.pick = pick;
       pg.top.querySelectorAll('.tile').forEach((b) => b.classList.toggle('on', b.dataset.v === pick));
-      deRefresh(true);
+      deRefresh();
       const w = warnHtml(); if (w !== warn) { warn = w; pg.top.querySelector('.dwarn').innerHTML = w; shRefit(); }
     },
     more: () => { more = !more; pg.setTop(topHtml()); shRefit(); },
-    office: () => { S.de.office = !S.de.office; S.de.touched = true; deRefresh(true); },
-    daltog: (el) => { S.de.open = !S.de.open; toggleSection(el, pg.inner); dePeek(); },
-    daltg: (el) => {
-      if (el.disabled) return;
-      const ty = deType(pick), it = deList(ty, true).find((x) => x.id === el.dataset.k); if (!it) return;
-      it.on = !it.on; S.de.touched = true;
-      el.querySelector('i').style.transitionDuration = (motionOff('seg') ? 0 : dms(250)) + 'ms';
-      el.classList.toggle('on', it.on); el.setAttribute('aria-checked', String(it.on)); el.closest('.alr').classList.toggle('off', !it.on);
-      // Everything else in the dropdown updates straight away; the switch keeps sliding.
-      const body = pg.inner.querySelector('.ald'), tmp = document.createElement('div'); tmp.innerHTML = dalHtml();
-      ['.alv', '.albody>.k:not(.alnote)'].forEach((q) => { const a = body.querySelector(q), b = tmp.querySelector(q); if (a && b) a.innerHTML = b.innerHTML; });
-      const oc = body.querySelector('.alchg'), nc = tmp.querySelector('.alchg');
-      if (!oc && nc) { body.querySelector('.alnote').before(nc); if (!motionOff('sheet')) nc.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150 }); } else if (oc && !nc) oc.remove();
-      deRefresh(false); dePeek();
-    },
-    daled: (el) => aledOpen('day', deType(pick), el.dataset.k, k),
-    daladd: () => aledOpen('day', deType(pick), null, k),
-    dalreset: () => { S.de.al = null; S.de.touched = true; deRefresh(true); },
+    office: () => { S.de.office = !S.de.office; deRefresh(); },
     swap: () => pushPage(swapWhoPage(k), { tall: true }),
     undo: () => askUndo(k),
     wtog: (el) => toggleSection(el, pg.inner),
@@ -871,7 +846,7 @@ function whoOnHtml(k) {
     const g = shiftGroup(c);
     (by[g] = by[g] || []).push([n, p.g, c]);
   }
-  const order = mg ? [mg, ...WHO_ORDER.filter((x) => x !== mg)] : WHO_ORDER;
+  const order = WHO_ORDER;   // shift cards always in shift order; your own shift's card is the one that starts open
   let h = '<div class="woh">Who\'s on · ' + longDate(k) + '</div>', any = false;
   const rank = (n, g) => { const gi = offices.indexOf(g), grp = TEAM.groups[gi]; return [gi < 0 ? 99 : gi, grp ? grp[1].indexOf(n) : 0]; };
   order.forEach((sg) => {
@@ -952,7 +927,7 @@ function swapCheckPage(k, who, their) {
   const days = their === k ? [k] : [k, their].sort(), od = TEAM.people[who].d;
   let s = days.map((x) => '<div class="cmp"><div class="d">' + longDate(x) + '</div><div class="r"><span>You</span><span>' + chip(D[x]) + ' → ' + chip(od[x]) + '</span></div><div class="r"><span>' + esc(who) + '</span><span>' + chip(od[x]) + ' → ' + chip(D[x]) + '</span></div></div>').join('');
   if (days.every((x) => D[x] === od[x])) s += '<div class="k" style="margin-top:8px">Nothing would change: you are on the same shift.</div>';
-  const pg = makePage({ top: '<div class="stp">Step 3 of 3</div><div class="eh">Check the swap</div><div class="k">You and ' + esc(firstName(who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>' + (alarmWarnOn() ? '<div class="alw">⏰ Confirm swap will update your alarms (opens Shortcuts)</div>' : ''), scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back'], ['Confirm swap', 'confirm', 1]], label: 'Swap, step 3 of 3' });
+  const pg = makePage({ top: '<div class="stp">Step 3 of 3</div><div class="eh">Check the swap</div><div class="k">You and ' + esc(firstName(who)) + ' exchange shifts on ' + (days.length === 1 ? 'this day' : 'both days') + '.</div>', scroll: s + '<div style="height:12px"></div>', bar: [['Back', 'back'], ['Confirm swap', 'confirm', 1]], label: 'Swap, step 3 of 3' });
   pg.on = {
     back: popPage,
     confirm: () => {
@@ -972,7 +947,6 @@ function applySwap(k, who, their) {
   });
   save(); renderFade(null, 'sheet'); closeSheet();
   toast('Swapped with ' + who);
-  alarmCheck('done');
 }
 function bhPage() {
   const y = leaveYear(), ro = y !== curYear();
@@ -998,7 +972,7 @@ function runPage(r) {
     runedit: () => { closeSheet(); S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r }; pushScreen(); },
     rundel: () => {
       for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { D[k] = 'O'; clearNote(ME_KEY, k); } }
-      save(); renderFade(null, 'sheet'); closeSheet(); toast('Leave deleted'); alarmCheck('change');
+      save(); renderFade(null, 'sheet'); closeSheet(); toast('Leave deleted');
     },
   };
   return pg;
@@ -1092,7 +1066,6 @@ function impInner() {
     h += '</div>';
   }
   const anyExists = I.months.some((M) => M.on && M.exists);
-  if (alarmWarnOn()) h += '<div class="alw">⏰ ' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + ' will update your alarms (opens Shortcuts)</div>';
   h += '<div class="acts"><button data-a="impcancel">Cancel</button><button class="p" data-a="impdone">' + (anyExists ? 'Add and replace' : 'Add to Rotapp') + '</button></div>';
   return h;
 }
@@ -1213,7 +1186,7 @@ function applyImport() {
 function exportBackup() {
   try {
     SET.lastBackup = ymd(today()); save();
-    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE, dayal: DAYAL })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE })], { type: 'application/json' });
     const a = document.createElement('a'), url = URL.createObjectURL(blob);
     a.href = url; a.download = 'rotapp-backup-' + ymd(today()) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -1243,7 +1216,6 @@ function restoreBackup(text) {
       SET.whoOff = Array.isArray(s.whoOff) ? s.whoOff.map(String) : [];
       SET.whoHide = Array.isArray(s.whoHide) ? s.whoHide.map(String) : [];
       SET.anim = cleanAnim(s.anim);
-      SET.alarm = cleanAlarm(s.alarm);
       if (['A', 'B', 'C'].includes(s.style)) SET.style = s.style;
       if (['auto', 'light', 'dark'].includes(s.theme)) SET.theme = s.theme;
       if (['cal', 'roll'].includes(s.wmode)) SET.wmode = s.wmode;
@@ -1253,7 +1225,7 @@ function restoreBackup(text) {
       if (typeof s.lastBackup === 'string') SET.lastBackup = s.lastBackup;
     }
     NOTES = cleanNotes(d.notes);
-    OFFICE = cleanOffice(d.office); DAYAL = cleanDayAl(d.dayal);
+    OFFICE = cleanOffice(d.office);
     TEAM = { people: {}, groups: [], latest: [], seen: {} };
     if (d.team && typeof d.team.people === 'object' && d.team.people) {
       for (const [n, p] of Object.entries(d.team.people)) {
@@ -1381,21 +1353,10 @@ function switchTap(el) {
   const ms = motionOff('seg') ? 0 : dms(250), kk = el.dataset.k, on = !el.classList.contains('on');
   const from = getComputedStyle(el.querySelector('i')).transform;
   if (kk.startsWith('area:')) SET.anim.areas[kk.slice(5)] = on;
-  else if (kk.startsWith('al:')) { SET.alarm[kk.slice(3)] = on; S.alTouched = true; if (kk === 'al:use' && !on) hideAlarmBanner(); }
-  else if (kk.startsWith('alm:')) { SET.alarm.types[kk.slice(4)].on = on; S.alTouched = true; }
-  else if (kk.startsWith('ali:')) { const [, ty, id] = kk.split(':'), it = SET.alarm.types[ty].list.find((x) => x.id === id); if (it) it.on = on; S.alTouched = true; }
   else SET.anim[kk] = on;
-  const rk = { 'al:use': 'aluse', 'al:auto': 'alauto' }[kk];
-  if (rk) S.revHold[rk] = !on;
   save();
   const sel = '.tg[data-k="' + kk + '"]';
   renderFade(sel, 'seg');
-  // Use alarms / Update automatically: the section underneath slides open or shut like a Settings card.
-  if (rk) {
-    delete S.revHold[rk];
-    const w = document.querySelector('[data-rev="' + rk + '"]');
-    if (w) { if (xjob) xjob.commit(); if (motionOff('cards')) w.classList.toggle('open', on); else slideSections([{ w, on }], document.querySelector('.setwrap'), dms(CARD_MS), CARD_EASE, (j) => { xjob = j; }, () => xjob); }
-  }
   const k = document.querySelector(sel + ' i'); if (!k || !ms) return;
   k.style.transition = 'none';
   const to = getComputedStyle(k).transform;
@@ -1453,14 +1414,13 @@ const moWrap = document.getElementById('mo'), moDim = document.getElementById('m
 const moCancel = () => { moBox.getAnimations().forEach((a) => a.cancel()); moDim.getAnimations().forEach((a) => a.cancel()); };
 function rmInner() { return '<h3>Remove ' + esc(S.rm) + '?</h3><div class="k">They disappear from Showing and the swap list, and their saved shifts are deleted. If they appear in a future import, they come back.</div><div class="acts"><button data-a="rmno">Cancel</button><button class="d" data-a="rmyes">Remove</button></div>'; }
 function modalSync() {
-  const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : S.cf ? 'cf' : S.aled ? 'aled' : S.alAsk ? 'alask' : null;
+  const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : S.cf ? 'cf' : null;
   if (!key) { if (MO.key) modalClose(); MO.key = null; return; }
-  if (key === 'aled' && MO.key === 'aled' && !MO.closing) return;          // the alarm editor redraws itself, so its wheels keep their place
-  const html = S.imp ? impInner() : S.rm ? rmInner() : S.aled ? aledInner() : S.alAsk ? alAskInner() : '<h3>' + esc(S.cf.title) + '</h3><div class="k">' + esc(S.cf.text) + '</div>' + (alarmWarnOn() ? '<div class="alw">⏰ ' + esc(S.cf.yes) + ' will update your alarms (opens Shortcuts)</div>' : '') + '<div class="acts"><button data-a="cfno">Cancel</button><button class="p" data-a="cfyes">' + esc(S.cf.yes) + '</button></div>';
-  moDim.dataset.a = S.imp ? 'impcancel' : S.rm ? 'rmno' : S.aled ? 'alcancel' : S.alAsk ? 'allater' : 'cfno';
+  const html = S.imp ? impInner() : S.rm ? rmInner() : '<h3>' + esc(S.cf.title) + '</h3><div class="k">' + esc(S.cf.text) + '</div><div class="acts"><button data-a="cfno">Cancel</button><button class="p" data-a="cfyes">' + esc(S.cf.yes) + '</button></div>';
+  moDim.dataset.a = S.imp ? 'impcancel' : S.rm ? 'rmno' : 'cfno';
   if (!MO.key || MO.closing) {
     moCancel(); MO.closing = false; MO.dipping = false;
-    moBox.className = S.imp ? '' : 'conf'; moBox.innerHTML = html; moWrap.hidden = false; moBox.scrollTop = 0; if (key === 'aled') wheelsInit();
+    moBox.className = S.imp ? '' : 'conf'; moBox.innerHTML = html; moWrap.hidden = false; moBox.scrollTop = 0;
     if (!motionOff('pop')) {
       moDim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dms(250) });
       moBox.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1)' }], { duration: dms(300), easing: EASE_SHEET });
@@ -1468,13 +1428,13 @@ function modalSync() {
   } else if (MO.key !== key) {
     // Next step: the whole box dips out and back in, so its size change is never seen.
     MO.pending = html;
-    if (motionOff('pop')) { moBox.innerHTML = html; moBox.scrollTop = 0; if (key === 'aled') wheelsInit(); }
+    if (motionOff('pop')) { moBox.innerHTML = html; moBox.scrollTop = 0; }
     else if (!MO.dipping) {
       MO.dipping = true; moCancel();
       const out = moBox.animate([{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.97)' }], { duration: dms(120), easing: 'ease-in', fill: 'forwards' });
       out.finished.then(() => {
         if (!MO.dipping) return;
-        MO.dipping = false; moBox.innerHTML = MO.pending; moBox.scrollTop = 0; markMixed(moBox); if (MO.key === 'aled') wheelsInit();
+        MO.dipping = false; moBox.innerHTML = MO.pending; moBox.scrollTop = 0; markMixed(moBox);
         moBox.animate([{ opacity: 0, transform: 'scale(.97)' }, { opacity: 1, transform: 'scale(1)' }], { duration: dms(220), easing: EASE_SHEET });
         out.cancel();
       }, () => {});
@@ -1493,306 +1453,19 @@ function modalClose() {
 const markMixed = (root) => root.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
 
 
-// ---------- office days and iPhone alarms ----------
-// OFFICE[ymd] = 1 marks a weekday M as an office day; it's only ever set by hand. DAYAL[ymd] = { ty, list } is a day's own alarms.
-// SET.alarm holds the alarm settings per shift type; Rotapp hands a schedule to the "Rotapp save" shortcut, and the
-// "Rotapp alarms" shortcut (an evening automation) turns it into Clock alarms.
-let OFFICE = {}, DAYAL = {};
-const AL_ORDER = ['Mo', 'M', 'MA', 'L', 'LA', 'E'];
-const AL_NAME = { Mo: 'M office', M: 'M', MA: 'MA', L: 'L', LA: 'LA', E: 'E' };
-const AL_CONF = { pop: 'Pop-up', ban: 'Banner', warn: 'Warning' };
-const hm2m = (t) => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-const m2hm = (n) => { n = ((n % 1440) + 1440) % 1440; return p2(Math.floor(n / 60)) + ':' + p2(n % 60); };
+// ---------- office days ----------
+// OFFICE[ymd] = 1 marks a weekday M as an office day. Every M starts as a home day; office is only ever set by hand in the day editor.
+let OFFICE = {};
 const isWeekday = (k) => { const w = pk(k).getDay(); return w > 0 && w < 6; };
 const canOffice = (k, c) => c === 'M' && isWeekday(k);
-const isOffice = (k) => !!OFFICE[k] && canOffice(k, D[k]);
-const alKey = (k, c, off) => (c === 'M' && off && isWeekday(k) ? 'Mo' : AL_ORDER.includes(c) && c !== 'Mo' ? c : null);
-const startMin = (ty) => { const t = TIMES[ty === 'Mo' ? 'M' : ty]; return t ? hm2m(t.slice(0, 5)) : 0; };
-const itemMin = (ty, it) => (it.f ? hm2m(it.t) : startMin(ty) - it.b);
-const durTxt = (b) => { const h = Math.floor(b / 60), m = b % 60; return (h ? h + ' h' : '') + (h && m ? ' ' : '') + (m || !h ? m + ' m' : ''); };
-const itemDesc = (ty, it) => (it.f ? 'Fixed time' : durTxt(it.b) + ' before start (' + m2hm(startMin(ty)) + ')');
-const sortItems = (ty, l) => l.slice().sort((a, b) => itemMin(ty, a) - itemMin(ty, b));
-const sameList = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const copyList = (l) => l.map((x) => ({ ...x }));
-let alSeq = 0;
-const alId = () => Date.now().toString(36) + (alSeq++).toString(36);
-
-function cleanItem(x) {
-  if (!x || typeof x !== 'object') return null;
-  return { id: String(x.id || alId()).replace(/[^a-z0-9]/gi, '') || alId(), f: x.f === 0 || x.f === false ? 0 : 1, t: /^([01]\d|2[0-3]):[0-5]\d$/.test(x.t) ? x.t : '07:00', b: Math.max(0, Math.min(720, Math.round((+x.b || 0) / 5) * 5)), on: x.on !== false };
-}
-function cleanAlarm(a) {
-  a = a && typeof a === 'object' ? a : {};
-  const types = {};
-  AL_ORDER.forEach((ty) => { const s = a.types && a.types[ty]; types[ty] = { on: !(s && s.on === false), list: s && Array.isArray(s.list) ? s.list.map(cleanItem).filter(Boolean) : [] }; });
-  const s = a.sent;
-  const sent = s && typeof s === 'object' && Array.isArray(s.lines) && /^\d{4}-\d{2}-\d{2}$/.test(s.until) ? { at: String(s.at || ''), until: s.until, lines: s.lines.map(String) } : null;
-  return { use: !!a.use, auto: !!a.auto, confirm: AL_CONF[a.confirm] ? a.confirm : 'pop', pick: AL_ORDER.includes(a.pick) ? a.pick : null, types, sent };
-}
 function cleanOffice(o) { const r = {}; if (o && typeof o === 'object') Object.keys(o).forEach((k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(k) && o[k]) r[k] = 1; }); return r; }
-function cleanDayAl(o) {
-  const r = {};
-  if (o && typeof o === 'object') for (const [k, v] of Object.entries(o)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && AL_ORDER.includes(v.ty) && Array.isArray(v.list)) r[k] = { ty: v.ty, list: v.list.map(cleanItem).filter(Boolean) };
-  return r;
-}
-// Office marks only live on weekday M; a day's own alarms only while it's still the same kind of shift.
-function pruneDays() {
-  Object.keys(OFFICE).forEach((k) => { if (!canOffice(k, D[k])) delete OFFICE[k]; });
-  Object.keys(DAYAL).forEach((k) => { if (DAYAL[k].ty !== alKey(k, D[k], OFFICE[k])) delete DAYAL[k]; });
-}
-// Only the shift types in your rota appear in Settings (never Off, leave, sick or PH).
-function alarmTypes() {
-  const has = new Set(Object.values(D));
-  return AL_ORDER.filter((ty) => has.has(ty === 'Mo' ? 'M' : ty));
-}
-const baseList = (ty) => SET.alarm.types[ty].list;
-
-// ---------- the schedule ----------
-// From today to the Sunday of next week. Each line: "YYYY-MM-DD HH:MM|label|", plus warning notes for the last 3 days.
-function alarmWindow() { const t = today(); return [t, addDays(t, ((7 - t.getDay()) % 7) + 7)]; }
-function alarmLines(from, to) {
-  const out = [];
-  for (let d = from; d <= addDays(to, 1); d = addDays(d, 1)) {
-    const k = ymd(d), ty = alKey(k, D[k], isOffice(k));
-    if (!ty || !SET.alarm.types[ty].on) continue;
-    const ov = DAYAL[k], list = ov && ov.ty === ty ? ov.list : baseList(ty);
-    list.forEach((it) => {
-      if (!it.on) return;
-      let m = itemMin(ty, it), dd = d;
-      while (m < 0) { m += 1440; dd = addDays(dd, -1); }
-      while (m >= 1440) { m -= 1440; dd = addDays(dd, 1); }
-      if (dd < from || dd > to) return;
-      out.push(ymd(dd) + ' ' + m2hm(m) + '|Rotapp · ' + AL_NAME[ty] + '|');
-    });
-  }
-  return [...new Set(out)].sort();
-}
-function alarmPayload() {
-  const [a, b] = alarmWindow(), lines = alarmLines(a, b), n = lines.length, until = ymd(b);
-  const notes = [2, 1, 0].map((x) => ymd(addDays(b, -x)) + ' 12:00|NOTE|Rotapp alarms run out after ' + longDate(until) + ': open Rotapp and tap Update alarms');
-  return { until, lines, text: ['SUMMARY|Rotapp: ' + n + (n === 1 ? ' alarm' : ' alarms') + ' saved, up to ' + longDate(until), ...lines, ...notes].join('\n') };
-}
-function alarmStatus() {
-  const A = SET.alarm;
-  if (!A.use) return null;
-  if (!A.sent) return { k: 'never', t: 'Not sent to your iPhone yet' };
-  const t = today(), left = Math.round((pk(A.sent.until) - t) / 864e5);
-  if (left < 0) return { k: 'out', t: 'Ran out after ' + longDate(A.sent.until) };
-  const was = A.sent.lines.filter((l) => l.slice(0, 10) >= ymd(t)).join('\n');
-  if (alarmLines(t, pk(A.sent.until)).join('\n') !== was) return { k: 'changed', t: 'Out of date: changed since your last update' };
-  if (left <= 2) return { k: 'low', t: 'Runs out after ' + longDate(A.sent.until) + ': update to top it up' };
-  return { k: 'ok', t: 'Up to date until ' + longDate(A.sent.until) };
-}
-const alarmSig = () => alarmLines(...alarmWindow()).join('\n') + '#' + (SET.alarm.sent ? SET.alarm.sent.until : '');
-const openUrl = (u) => (window.__rotappOpen || ((x) => { location.href = x; }))(u);
-function sendAlarms() {
-  const p = alarmPayload();
-  SET.alarm.sent = { at: new Date().toISOString(), until: p.until, lines: p.lines };
-  S.alSnooze = null; S.alAsk = false; S.alTouched = false; save();
-  hideAlarmBanner(); render();
-  openUrl('shortcuts://run-shortcut?name=' + encodeURIComponent('Rotapp save') + '&input=text&text=' + encodeURIComponent(p.text));
-}
-const alarmWarnOn = () => SET.alarm.use && SET.alarm.auto && SET.alarm.confirm === 'warn';
-// Automatic mode: after a change that affects alarms, ask in the chosen way. from 'done' means a warning line was showing,
-// so the tap that finished the change was the confirmation. Anywhere without a warning line, Warning falls back to the banner.
-function alarmCheck(from) {
-  const A = SET.alarm;
-  if (!A.use || !A.auto) return;
-  const s = alarmStatus();
-  if (!s || s.k === 'ok') return;
-  if (!A.sent && !alarmLines(...alarmWindow()).length) return;
-  if (from !== 'done' && S.alSnooze === alarmSig()) return;
-  if (A.confirm === 'warn' && from === 'done') { sendAlarms(); return; }
-  setTimeout(() => { if (A.confirm === 'pop' && from !== 'open') { S.alAsk = true; render(); } else showAlarmBanner(); }, from === 'open' ? 0 : dms(320));
-}
-function alarmLater() { S.alSnooze = alarmSig(); S.alAsk = false; hideAlarmBanner(); render(); }
-const alAskInner = () => '<h3>Update your alarms?</h3><div class="k">Rotapp will open Shortcuts to save your alarms. Swipe back to Rotapp when it\'s done.</div><div class="acts"><button data-a="allater">Later</button><button class="p" data-a="alsend">Update</button></div>';
-
-// ---------- banner (Confirm with: Banner) ----------
-const alBan = document.createElement('div');
-alBan.id = 'alban'; alBan.hidden = true; alBan.setAttribute('role', 'status');
-alBan.innerHTML = '<div class="t"><b>Alarms need updating</b><span>Opens Shortcuts · swipe back to Rotapp when it\'s done</span></div><button class="u" data-a="alsend">Update</button><button class="x" data-a="allater" aria-label="Not now">✕</button>';
-document.getElementById('app').appendChild(alBan);
-let alBanA = null;
-function showAlarmBanner() {
-  if (!alBan.hidden && !alBan.dataset.out) return;
-  if (alBanA) alBanA.cancel();
-  delete alBan.dataset.out; alBan.hidden = false;
-  if (motionOff('toast')) return;
-  alBanA = alBan.animate([{ transform: 'translate3d(0,-140%,0)', opacity: 0 }, { transform: 'translate3d(0,0,0)', opacity: 1 }], { duration: dms(380), easing: EASE_SHEET });
-}
-function hideAlarmBanner() {
-  if (alBan.hidden || alBan.dataset.out) return;
-  if (alBanA) alBanA.cancel();
-  if (motionOff('toast')) { alBan.hidden = true; return; }
-  alBan.dataset.out = '1';
-  alBanA = alBan.animate([{ transform: 'translate3d(0,0,0)', opacity: 1 }, { transform: 'translate3d(0,-140%,0)', opacity: 0 }], { duration: dms(260), easing: 'ease-in', fill: 'forwards' });
-  alBanA.finished.then(() => { if (!alBan.dataset.out) return; alBan.hidden = true; delete alBan.dataset.out; alBanA.cancel(); }, () => {});
-}
-
-// ---------- Settings › Alarms ----------
-// A section that slides open with a switch (Use alarms, Update automatically). S.revHold keeps the old state for one redraw.
-const reveal = (key, open, body) => '<div class="xw rv' + xopen(S.revHold[key] !== undefined ? S.revHold[key] : open) + '" data-rev="' + key + '"><div class="xi"><div class="xb">' + body + '</div></div></div>';
-function alarmRows(ty, list, edit, tog) {
-  if (!list.length) return '<div class="k alnone">No alarms yet.</div>';
-  return sortItems(ty, list).map((it) => '<div class="alr' + (it.on ? '' : ' off') + '"><button class="alb" data-a="' + edit + '" data-v="' + ty + '" data-k="' + it.id + '"><span class="tm">' + m2hm(itemMin(ty, it)) + '</span><span class="ds">' + itemDesc(ty, it) + '</span></button>' + tog(it) + '</div>').join('');
-}
-function alarmSummary() {
-  const A = SET.alarm; if (!A.use) return 'Off';
-  const s = alarmStatus();
-  return (A.auto ? 'On · automatic' : 'On') + ' · ' + (s.k === 'ok' ? 'up to date' : s.k === 'never' ? 'not sent yet' : 'needs updating');
-}
-function alarmSettingsHtml() {
-  const A = SET.alarm, types = alarmTypes();
-  let b = '';
-  if (!types.length) b += '<div class="it col"><span class="k">Import a rota first: alarm settings appear for the shift types in it.</span></div>';
-  else {
-    const ty = types.includes(A.pick) ? A.pick : types[0], tt = A.types[ty];
-    b += '<div class="it alpk">' + segHtml('alpick', types.map((x) => [x, types.length > 4 && x === 'Mo' ? 'Office' : AL_NAME[x]]), ty) + '</div>';
-    b += '<div class="it"><span>' + AL_NAME[ty] + ' alarms<small class="k">' + (ty === 'Mo' ? 'All M office days' : 'All ' + AL_NAME[ty] + ' shifts' + (ty === 'M' ? ' (not office days)' : '')) + '</small></span>' + tgl('alm:' + ty, tt.on) + '</div>';
-    b += '<div class="allist' + (tt.on ? '' : ' dis') + '">' + alarmRows(ty, tt.list, 'aledit', (it) => tgl('ali:' + ty + ':' + it.id, it.on, !tt.on)) + '<button class="aladd" data-a="aladd" data-v="' + ty + '"' + (tt.on ? '' : ' disabled') + '>+ Add alarm</button></div>';
-  }
-  b += '<div class="it"><span>Update alarms automatically<small class="k">Asks first, then opens Shortcuts</small></span>' + tgl('al:auto', A.auto) + '</div>';
-  b += reveal('alauto', A.auto, '<div class="it alcf"><span>Confirm with</span>' + segHtml('alconf', Object.entries(AL_CONF), A.confirm) + '</div>');
-  const s = alarmStatus() || { k: 'ok', t: '' };
-  if (alarmWarnOn() && S.alTouched && s.k !== 'ok') b += '<div class="alw">⏰ Leaving Settings will update your alarms (opens Shortcuts)</div>';
-  b += '<div class="alst ' + s.k + '">' + (s.k === 'ok' ? '' : '● ') + s.t + '</div><button class="btn alup" data-a="alsend">Update alarms</button><div class="k alsub">Opens Shortcuts. Swipe back to Rotapp when it\'s done.</div>';
-  b += nestRow('alguide', 'Set up on iPhone', 'One-off, about 10 minutes', alarmGuideHtml());
-  return '<div class="it"><span>Use alarms<small class="k">Set iPhone alarms from your shifts</small></span>' + tgl('al:use', A.use) + '</div>' + reveal('aluse', A.use, b);
-}
-function alarmGuideHtml() {
-  const ol = (l) => '<ol class="gd">' + l.map((x) => '<li>' + x + '</li>').join('') + '</ol>';
-  return '<div class="guide"><div class="k">Rotapp can\'t add alarms itself, so two shortcuts do it. You build them once in the Shortcuts app. Type names exactly as shown.</div>' +
-    '<div class="gh">1. "Rotapp save"</div><div class="k">Receives your alarms from Rotapp and saves them.</div>' + ol([
-      'In Shortcuts, tap <b>+</b>. Tap the name at the top, choose Rename and type <b>Rotapp save</b>.',
-      'Add <b>Save File</b>. Tap its blue file field and choose <b>Shortcut Input</b>. If a line "Receive Any input from Nowhere" appears, tap Nowhere and turn on Share Sheet.',
-      'Tap <b>›</b> on Save File: turn off <b>Ask Where to Save</b>, set Subpath to <b>rotapp-alarms.txt</b>, turn on <b>Overwrite If File Exists</b>.',
-      'Add <b>Split Text</b>: split Shortcut Input by <b>New Lines</b>.',
-      'Add <b>Get Item from List</b>: First Item. Add <b>Split Text</b> again: split Item from List by Custom <b>|</b>.',
-      'Add <b>Get Item from List</b>: Last Item. Add <b>Show Notification</b> and set its text to that Item from List. Tap Done.',
-    ]) +
-    '<div class="gh">2. "Rotapp alarms"</div><div class="k">Runs each evening: removes the old Rotapp alarms and adds the ones due in the next 24 hours.</div>' + ol([
-      'Tap <b>+</b> and name it <b>Rotapp alarms</b>.',
-      'Add <b>Get File</b> (from Folder): Folder Shortcuts, path <b>rotapp-alarms.txt</b>. Turn off Error If Not Found.',
-      'Add <b>Find Alarms</b>: add a filter <b>Label begins with Rotapp</b>. Then add <b>Delete Alarms</b> with those Alarms.',
-      'Add <b>Date</b> set to <b>Current Date</b>, then <b>Adjust Date</b>: Add 1 day to it.',
-      'Add <b>Split Text</b>: split the File by <b>New Lines</b>. Add <b>Repeat with Each</b> item in Split Text.',
-      'Inside Repeat: <b>Split Text</b> the Repeat Item by Custom <b>|</b>. Then <b>Get Item from List</b>: First Item, and <b>Get Dates from Input</b> on it.',
-      'Still inside: <b>If</b> Dates <b>is between</b> Current Date and Adjusted Date.',
-      'Inside If: <b>Get Item from List</b>: Item At Index 2 (of the split line). Add another <b>If</b>: that item <b>is</b> NOTE → <b>Get Item from List</b>: Last Item, then <b>Show Notification</b> with it. Otherwise → <b>Add Alarm</b>: time = Dates, label = Item at Index 2, repeat never.',
-      'Tap Done. Run it once by hand to allow access to Files and Clock (choose Always Allow if asked).',
-    ]) +
-    '<div class="gh">3. The evening automation</div>' + ol([
-      'In Shortcuts, open <b>Automation</b> › <b>+</b> › <b>Time of Day</b>. Pick any time, Daily (each run sets the alarms due in the next 24 hours).',
-      'Choose <b>Run Immediately</b>, then pick <b>Rotapp alarms</b>.',
-      'Optional: turn off <b>Notify When Run</b> to hide the "Running your automation" notification.',
-    ]) +
-    '<div class="gh">4. First run</div>' + ol([
-      'Set up your alarm times above, then tap <b>Update alarms</b>. Swipe back when Shortcuts shows "alarms saved".',
-      'Check the Clock app after the first evening run: you should see alarms labelled "Rotapp · …".',
-    ]) + '</div>';
-}
-
-// ---------- the alarm editor: a pop-up in the middle with scroll wheels ----------
-// S.aled = { scope: 'type' | 'day', ty, id (null = new), k (day), form: { f, t, b } }
-const WH = 36;
-function wheelCol(id, vals) { return '<div class="wc" data-w="' + id + '"><div class="pd"></div><div class="pd"></div>' + vals.map(([v, l]) => '<div class="wi" data-a="wpick" data-i="' + v + '">' + l + '</div>').join('') + '<div class="pd"></div><div class="pd"></div></div>'; }
-function wheelsHtml() {
-  const f = S.aled.form;
-  if (f.f) return '<div class="wh">' + wheelCol('h', [...Array(24)].map((_, i) => [i, p2(i)])) + '<span class="wcol">:</span>' + wheelCol('m', [...Array(60)].map((_, i) => [i, p2(i)])) + '</div>';
-  return '<div class="wh">' + wheelCol('bh', [...Array(13)].map((_, i) => [i, i + ' h'])) + wheelCol('bm', [...Array(12)].map((_, i) => [i * 5, i * 5 + ' m'])) + '</div><div class="k alring">before ' + m2hm(startMin(S.aled.ty)) + ' start · rings at <b>' + m2hm(startMin(S.aled.ty) - f.b) + '</b></div>';
-}
-function aledInner() {
-  const E = S.aled, f = E.form;
-  return '<h3 class="alh">' + (E.id ? 'Edit alarm' : 'New alarm') + ' · ' + (E.scope === 'day' ? longDate(E.k) : AL_NAME[E.ty]) + '</h3>' +
-    '<div class="alkind">' + segHtml('alkind', [['1', 'Fixed time'], ['0', 'Before shift start']], String(f.f)) + '</div><div class="alwh">' + wheelsHtml() + '</div>' +
-    '<div class="acts"><button data-a="alcancel">Cancel</button><button class="p" data-a="alsave">Save</button></div>' + (E.id ? '<button class="aldel" data-a="aldel">Delete alarm</button>' : '');
-}
-function wheelsInit() {
-  const f = S.aled && S.aled.form; if (!f) return;
-  moBox.querySelectorAll('.wc').forEach((w) => {
-    const id = w.dataset.w, val = id === 'h' ? +f.t.slice(0, 2) : id === 'm' ? +f.t.slice(3) : id === 'bh' ? Math.floor(f.b / 60) : f.b % 60;
-    const items = [...w.querySelectorAll('[data-i]')];
-    w.scrollTop = Math.max(0, items.findIndex((d) => +d.dataset.i === val)) * WH;
-    let tm = 0;
-    w.addEventListener('scroll', () => { clearTimeout(tm); tm = setTimeout(() => { wheelsRead(); const r = moBox.querySelector('.alring b'); if (r && S.aled) r.textContent = m2hm(startMin(S.aled.ty) - S.aled.form.b); }, 60); }, { passive: true });
-  });
-}
-function wheelsRead() {
-  const E = S.aled; if (!E) return;
-  const g = (id) => { const w = moBox.querySelector('[data-w="' + id + '"]'); if (!w) return null; const it = w.querySelectorAll('[data-i]'); return +it[Math.max(0, Math.min(it.length - 1, Math.round(w.scrollTop / WH)))].dataset.i; };
-  if (E.form.f) { const h = g('h'), m = g('m'); if (h != null) E.form.t = p2(h) + ':' + p2(m); }
-  else { const h = g('bh'), m = g('bm'); if (h != null) E.form.b = h * 60 + m; }
-}
-function aledOpen(scope, ty, id, k) {
-  const list = scope === 'day' ? deList(ty, false) : baseList(ty), it = id && list.find((x) => x.id === id);
-  const def = startMin(ty) - 60;
-  S.aled = { scope, ty, id: it ? id : null, k, form: it ? { f: it.f, t: it.f ? it.t : m2hm(itemMin(ty, it)), b: it.f ? 60 : it.b } : { f: 1, t: m2hm(def), b: 60 } };
-  render();
-}
-function aledSave(del) {
-  const E = S.aled; if (!E) return;
-  wheelsRead();
-  const list = E.scope === 'day' ? deList(E.ty, true) : baseList(E.ty), i = list.findIndex((x) => x.id === E.id);
-  if (del) { if (i >= 0) list.splice(i, 1); }
-  else {
-    const it = { id: E.id || alId(), f: E.form.f, t: E.form.f ? E.form.t : '07:00', b: E.form.f ? 0 : E.form.b, on: i >= 0 ? list[i].on : true };
-    if (i >= 0) list[i] = it; else list.push(it);
-  }
-  S.aled = null;
-  if (E.scope === 'day') { S.de.touched = true; deRefresh(true); render(); }
-  else { S.alTouched = true; save(); renderFade(null, 'pop'); }
-}
-SEGACT.alpick = (v) => { SET.alarm.pick = v; save(); };
-SEGACT.alconf = (v) => { SET.alarm.confirm = v; save(); };
-SEGACT.alkind = (v) => {
-  if (!S.aled) return;
-  wheelsRead(); S.aled.form.f = +v;
-  if (!S.aled.form.f && S.aled.form.b === 0) S.aled.form.b = 60;
-  moBox.querySelectorAll('.alkind button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
-  const w = moBox.querySelector('.alwh'); w.innerHTML = wheelsHtml(); wheelsInit();
-  if (!motionOff('pop')) w.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: 'ease-out' });
-};
-
-// ---------- day editor: Office pill and the Alarms dropdown ----------
-// S.de holds the day editor's unsaved choices: { k, office, al: { ty, list } | null, open, touched }.
-function deType(pick) { const k = S.de.k, c = pick || D[k]; return alKey(k, c, S.de.office); }
-function deList(ty, write) {
-  const de = S.de;
-  if (de.al && de.al.ty === ty) return de.al.list;
-  if (!write) return baseList(ty);
-  de.al = { ty, list: copyList(baseList(ty)) };
-  return de.al.list;
-}
-function dalHtml() {
-  const de = S.de; if (!SET.alarm.use) return '';
-  const ty = deType(de.pick); if (!ty) return '';
-  const list = deList(ty, false), master = SET.alarm.types[ty].on, changed = de.al && de.al.ty === ty && !sameList(de.al.list, baseList(ty));
-  const ons = sortItems(ty, list).filter((x) => x.on);
-  const sum = master ? (ons.length ? ons.map((x) => m2hm(itemMin(ty, x))).join(', ') : 'None on') : 'Off for ' + AL_NAME[ty];
-  let h = '<div class="xw wsec ald' + xopen(de.open) + '"><div class="xi"><button class="wsh" data-a="daltog" aria-expanded="' + de.open + '"><span class="aln">⏰ Alarms</span><span class="alv">' + sum + (changed ? ' · changed' : '') + '</span><span class="chev">▾</span></button><div class="xb"><div class="albody">';
-  h += '<div class="allist' + (master ? '' : ' dis') + '">' + alarmRows(ty, list, 'daled', (it) => '<button class="tg' + (it.on ? ' on' : '') + '" data-a="daltg" data-k="' + it.id + '" role="switch" aria-checked="' + !!it.on + '"' + (master ? '' : ' disabled') + '><i></i></button>') + '<button class="aladd" data-a="daladd"' + (master ? '' : ' disabled') + '>+ Add alarm for this day</button></div>';
-  if (!master) h += '<div class="k">' + AL_NAME[ty] + ' alarms are off in Settings.</div>';
-  if (changed) h += '<div class="alchg"><span>Changed for this day only</span><button data-a="dalreset">Reset to ' + AL_NAME[ty] + '</button></div>';
-  h += '<div class="k alnote">Changes here only affect this day. Changed days keep their own alarms, even if you change ' + AL_NAME[ty] + ' in Settings.</div>';
-  return h + '</div></div></div></div>';
-}
-const deWarn = () => alarmWarnOn() && (S.de.touched || (S.de.pick && S.de.pick !== D[S.de.k]));
-// Redraw the parts of the day editor that depend on the choices (pill, warning line, Alarms dropdown).
-function deRefresh(dal) {
+// An office mark only lives on a weekday M: if the day changes (edit, swap, import, leave), the mark goes.
+function pruneDays() { Object.keys(OFFICE).forEach((k) => { if (!canOffice(k, D[k])) delete OFFICE[k]; }); }
+// Day editor: show the Office pill only while the chosen shift is a weekday M.
+function deRefresh() {
   const pg = curPage(); if (!pg || !S.de) return;
   const pw = pg.top.querySelector('.opw'), c = S.de.pick || D[S.de.k];
   if (pw) pw.innerHTML = canOffice(S.de.k, c) ? '<button class="opill' + (S.de.office ? ' on' : '') + '" data-a="office" aria-pressed="' + S.de.office + '">Office</button>' : '';
-  const w = pg.top.querySelector('.alw'), show = deWarn();
-  if (w && w.hidden === show) { w.hidden = !show; shRefit(); }
-  if (dal) { const d = pg.inner.querySelector('.dal'); if (d) d.innerHTML = dalHtml(); dePeek(); }
-}
-// The sheet's normal height includes the Alarms dropdown (closed: its header; open: the whole list), so it's never hidden.
-function dePeek() {
-  const pg = curPage(); if (!pg || !S.de || SH.host !== 'sheet') return;
-  const d = pg.inner.querySelector('.dal'), w = d && d.firstElementChild;
-  SH.peek = w ? 10 + (S.de.open ? w.offsetHeight : w.querySelector('.wsh').offsetHeight + 2) : 0;
-  shRefit();
 }
 
 // ---------- events ----------
@@ -1807,7 +1480,6 @@ document.addEventListener('click', (e) => {
   if (a === 'seg') { if (!el.disabled) segTap(el); return; }
   if (a === 'atg') { switchTap(el); return; }
   if (a === 'xtog') { xToggle(el); return; }
-  if (a === 'tab' && S.tab === 'settings' && v !== 'settings' && S.alTouched) { S.alTouched = false; setTimeout(() => alarmCheck(alarmWarnOn() ? 'done' : 'change'), 0); }
   if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.cf = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
   else if (a === 'yr') S.ymenu = !S.ymenu;
   else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; }
@@ -1817,22 +1489,14 @@ document.addEventListener('click', (e) => {
   else if (a === 'rmask') S.rm = v;
   else if (a === 'rmno') S.rm = null;
   else if (a === 'cfno') S.cf = null;
-  else if (a === 'alsend') { sendAlarms(); return; }
-  else if (a === 'allater') { alarmLater(); return; }
-  else if (a === 'aledit') { aledOpen('type', v, k); return; }
-  else if (a === 'aladd') { aledOpen('type', v, null); return; }
-  else if (a === 'alcancel') { if (S.aled && S.aled.scope === 'day') { S.aled = null; render(); return; } S.aled = null; }
-  else if (a === 'alsave') { aledSave(false); return; }
-  else if (a === 'aldel') { aledSave(true); return; }
-  else if (a === 'wpick') { const w = el.parentElement, i = [...w.querySelectorAll('[data-i]')].indexOf(el); w.scrollTo({ top: i * WH, behavior: motionOff('pop') ? 'auto' : 'smooth' }); return; }
-  else if (a === 'cfyes') { const k2 = S.cf.k; S.cf = null; closeSheet(); undoChange(k2); alarmCheck('done'); return; }
+  else if (a === 'cfyes') { const k2 = S.cf.k; S.cf = null; closeSheet(); undoChange(k2); return; }
   else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); renderFade(null, 'pop'); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
   else if (a === 'next') { interrupt(); animateTo(1); return; }
   else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
-  else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0, toTitle: true }); dePeek(); return; }
+  else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0, toTitle: true }); return; }
   else if (a === 'past') S.showPast = !S.showPast;
   else if (a === 'add') { S.add = addDefaults(); pushScreen(); return; }
   else if (a === 'acancel') { popScreen(); S.add = null; }
@@ -1842,7 +1506,7 @@ document.addEventListener('click', (e) => {
     // Leave gets no note, and clears any note on the days it writes.
     if (A.edit) for (let d = A.edit.s; d <= A.edit.e; d = addDays(d, 1)) if (D[ymd(d)] === A.edit.t) { D[ymd(d)] = 'O'; clearNote(ME_KEY, ymd(d)); }
     weekdaysIn(s, en).forEach((d) => { D[ymd(d)] = A.type; clearNote(ME_KEY, ymd(d)); });
-    save(); S.add = null; renderFade(null, 'push'); popScreen(); alarmCheck('change'); return;
+    save(); S.add = null; renderFade(null, 'push'); popScreen(); return;
   }
   else if (a === 'run') { openSheet(runPage(leaveRuns(leaveYear())[+v]), { panel: true, expandable: false }); return; }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
@@ -1853,7 +1517,7 @@ document.addEventListener('click', (e) => {
   else if (a === 'impcand') { SET.name = S.imp.candidates[+v]; save(); readFile(); return; }
   else if (a === 'impmanual') { S.imp = null; S.tab = 'month'; S.moff = 1; }
   else if (a === 'implist') S.imp.months[+v].open = !S.imp.months[+v].open;
-  else if (a === 'impdone') { applyImport(); alarmCheck('done'); return; }
+  else if (a === 'impdone') { applyImport(); return; }
   else if (a === 'imptick') return;
   render();
 });
@@ -1883,7 +1547,7 @@ document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET
 // No page bounce: a drag only moves something that can actually scroll (long screens keep their bounce at the ends).
 const canScroll = (el) => { for (; el && el !== document.body; el = el.parentElement) { if (el.scrollHeight > el.clientHeight + 1) { const o = getComputedStyle(el).overflowY; if (o === 'auto' || o === 'scroll') return true; } } return false; };
 document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || e.target.closest('input,textarea,select')) return; if (!canScroll(e.target)) e.preventDefault(); }, { passive: false });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.aled) { S.aled = null; render(); } else if (S.alAsk) alarmLater(); else if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (S.imp) { S.imp = null; render(); } else if (S.rm) { S.rm = null; render(); } else if (S.cf) { S.cf = null; render(); } else closeSheet(); } });
 // The side panel only exists on wide screens: if the window narrows while it's open, close it so swiping isn't left blocked.
 window.addEventListener('resize', () => { if (SH.host === 'panel' && !isWide()) closeNow(); });
 window.addEventListener('resize', () => { if (SH.host !== 'sheet' || SH.state === 'closed' || SH.state === 'closing') return; shStop(); shMeasure(); shApply(SH.state === 'tall' ? 0 : SH.Tc); });
@@ -2034,11 +1698,8 @@ window.addEventListener('resize', () => { if (TR && !job && !drag) layout(0); })
 // ---------- start ----------
 load();
 SET.anim = cleanAnim(SET.anim);
-SET.alarm = cleanAlarm(SET.alarm);
 ensureYear();
 render();
 try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* best effort */ }
-alarmCheck('open');
-document.addEventListener('visibilitychange', () => { if (!document.hidden) alarmCheck('open'); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 window.__rotapp = { get data() { return D; }, get settings() { return SET; }, get team() { return TEAM; } };

@@ -2,6 +2,14 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.9.2 — 13 Nov 2026
+- Who's on: shift cards always appear in shift order (M, L, E). Your own shift's card still starts open, wherever it sits.
+
+## 0.9.1 — 10 Nov 2026
+- Alarms removed for now (Settings › Alarms, the day editor's Alarms dropdown, the update confirmations and the setup guide). The idea is parked and may come back.
+- Office days stay: the Office pill in the day editor on weekday M shifts.
+- Data saved by 0.9 still loads; its alarm settings are ignored.
+
 ## 0.9 — 10 Nov 2026
 - Office days: an Office pill at the top right of the day editor on weekday M shifts. Every M starts as a home day; office days are only ever set by hand.
 - Alarms (optional, off until you turn on "Use alarms" in Settings › Alarms):

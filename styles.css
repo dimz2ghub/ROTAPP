@@ -463,68 +463,9 @@ input,select,textarea,.sel,.fld{font-size:16px}
 html,body{overflow:hidden;overscroll-behavior:none}
 #main,#push{overscroll-behavior-y:contain}
 
-/* ---------- 0.9: office days and alarms ---------- */
-.xw.rv>.xi{background:none;border:0}
-.it small.k{display:block;font-size:12px;margin-top:1px}
-.it.alpk{display:block}
-.it.alpk .seg2,.it.alcf .seg2{display:grid;width:100%}
-.it.alcf{flex-wrap:wrap}
-.it.alcf .seg2{flex:1 1 220px}
-.allist{padding:2px 0 6px;border-bottom:1px solid var(--border)}
-.allist.dis .alr,.allist.dis .alnone{opacity:.45}
-.alr{display:flex;align-items:center;gap:10px;padding:6px 0}
-.alr+.alr{border-top:1px solid var(--border)}
-.alb{flex:1;min-width:0;display:flex;align-items:center;gap:12px;border:0;background:none;padding:4px 0;text-align:left;color:var(--text)}
-.alb .tm{font-size:24px;font-weight:300;letter-spacing:.5px;font-variant-numeric:tabular-nums;min-width:74px}
-.alb .ds{font-size:12px;color:var(--muted);min-width:0}
-.alr.off .alb{opacity:.45}
-.aladd{border:0;background:none;color:var(--accent);font-weight:600;font-size:14px;padding:8px 0 4px}
-.aladd:disabled{opacity:.4}
-.alnone{padding:8px 0 2px}
-.alst{font-size:12px;color:var(--muted);padding:12px 0 0}
-.alst.changed,.alst.low,.alst.out,.alst.never{color:#FF8A3D}
-.btn.alup{margin-top:8px}
-.alsub{text-align:center;margin:6px 0 4px}
-.alw{font-size:12px;color:#FF8A3D;background:rgba(255,138,61,.12);border-radius:8px;padding:7px 10px;margin:8px 0 4px;line-height:1.35}
-.alw[hidden]{display:none}
-.stop>.alw{margin:0 0 8px}
-.guide{padding:2px 0 10px}
-.gh{font-weight:600;font-size:14px;margin:12px 0 2px}
-.gd{margin:6px 0 0;padding-left:20px;font-size:13px;line-height:1.45;color:var(--text2)}
-.gd li{margin:5px 0}
-/* alarm editor pop-up */
-#modal .alh{text-align:center}
-.alkind .seg2{display:grid;width:100%;margin-top:6px}
-.wh{position:relative;display:flex;justify-content:center;align-items:center;gap:6px;height:180px;margin:12px 0 4px}
-.wh:before{content:"";position:absolute;left:12%;right:12%;top:72px;height:36px;border-radius:9px;background:var(--segon);box-shadow:var(--segsh);pointer-events:none}
-.wc{position:relative;width:84px;height:180px;overflow-y:scroll;scroll-snap-type:y mandatory;scrollbar-width:none;overscroll-behavior:contain;-webkit-mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent);mask-image:linear-gradient(transparent,#000 32%,#000 68%,transparent)}
-.wc::-webkit-scrollbar{display:none}
-.wc>div{height:36px;line-height:36px;text-align:center;font-size:22px;font-variant-numeric:tabular-nums;color:var(--text)}
-.wc .wi{scroll-snap-align:center;cursor:pointer}
-.wcol{position:relative;font-size:22px;color:var(--muted)}
-.alring{text-align:center}
-.alring b{color:var(--text)}
-.aldel{display:block;width:100%;border:0;background:none;color:var(--danger);font-weight:600;font-size:14px;padding:12px 0 0}
-/* banner */
-#alban{position:fixed;left:12px;right:12px;top:max(10px,env(safe-area-inset-top));z-index:39;max-width:520px;margin:0 auto;display:flex;align-items:center;gap:10px;background:var(--sheet);border:1px solid var(--border);border-radius:14px;padding:10px 12px;box-shadow:0 8px 30px rgba(0,0,0,.3)}
-#alban[hidden]{display:none}
-#alban .t{flex:1;min-width:0;font-size:13px;line-height:1.3}
-#alban .t span{display:block;color:var(--muted);font-size:12px}
-#alban .u{border:0;border-radius:9px;padding:8px 12px;font-weight:700;font-size:13px;background:var(--pbg);color:var(--pfg)}
-#alban .x{border:0;background:none;color:var(--muted);font-size:16px;padding:4px 2px}
-/* day editor */
+/* ---------- 0.9: office days ---------- */
 .ehr{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
 .ehr .eh{min-width:0}
 .opw{flex:none}
 .opill{border:1px solid var(--border);background:var(--tile);color:var(--muted);border-radius:999px;padding:5px 13px;font-size:12px;font-weight:600}
 .opill.on{background:#2FB866;color:#06150B;border-color:transparent}
-.dal:empty{display:none}
-.dal{margin-top:4px}
-.ald .wsh{padding:7px 12px}
-.ald .aln{font-weight:600;white-space:nowrap}
-.ald .alv{flex:1;min-width:0;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.albody{padding:0 12px 10px}
-.albody .allist{border-bottom:0}
-.alchg{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:#FF8A3D;margin-top:4px}
-.alchg button{border:0;background:none;color:var(--accent);font-weight:600;font-size:12px;padding:2px 0}
-.alnote{margin-top:6px}
