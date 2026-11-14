@@ -575,3 +575,5 @@ html,body{overflow:hidden;overscroll-behavior:none}
 .tg.sm i{width:20px;height:20px}
 .tg.sm.on i{transform:translateX(16px)}
 .pbar button{flex:none;width:auto;margin:0;text-align:left}
+.lcard .lct{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lvd{font-size:14px;color:var(--muted);margin:-2px 0 6px}

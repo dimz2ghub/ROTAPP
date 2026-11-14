@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.9.3 prototype';
+const VERSION = '0.9.4 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -131,12 +131,12 @@ const S = {
 // ---------- leave maths ----------
 const curYear = () => today().getFullYear();
 const leaveYear = () => S.lyear || curYear();
-// A new year starts with last year's allowance copied in; carry-over is worked out (see allowFor) unless typed in.
+// A new year starts with last year's allowance copied in; carried-over days are typed in by hand.
 function ensureYear() {
   const y = curYear();
   if (SET.years[y]) return;
   const prev = Object.keys(SET.years).map(Number).filter((x) => x < y).sort((a, b) => b - a)[0];
-  if (prev != null && SET.years[prev].allow != null) { SET.years[y] = { allow: SET.years[prev].allow, carry: null, hand: false }; save(); }
+  if (prev != null && SET.years[prev].allow != null) { SET.years[y] = { allow: SET.years[prev].allow, carry: 0 }; save(); }
 }
 // English bank holidays (England and Wales), worked out for any year. One-off extra days are not included.
 function easterSunday(y) {
@@ -339,8 +339,7 @@ function settingsHtml() {
   // Leave: the allowance for the year on the Leave tab, and what shows on the Leave tab.
   const y = leaveYear(), A = allowFor(y), ro = !leaveEditable(y), cyr = curYear();
   let lb = '<div class="xsh">Allowance · ' + y + (ro ? ' (read-only)' : '') + '</div><div class="alw2"><label class="af"><input class="fld num" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (A && A.allow != null ? A.allow : '') + '" placeholder="–"' + (ro ? ' disabled' : '') + '><span>Allowance</span></label><span class="op">+</span><label class="af"><input class="fld num" id="setCarry" type="number" inputmode="numeric" min="0" max="99" value="' + (A ? A.carry : 0) + '"' + (ro ? ' disabled' : '') + '><span>Carried over</span></label><div class="tot"><b>' + (A && A.allow != null ? A.allow + A.carry : '–') + '</b><span>days in total</span></div></div>';
-  if (y > cyr) lb += '<div class="k awo">' + (A && A.hand ? 'Set by you. <button data-a="useworked">Use worked-out (' + workedCarry(y) + ')</button>' : 'Carried over worked out from what\'s left in ' + (y - 1) + ' (approved holiday only).') + '</div>';
-  else if (y < cyr) lb += '<div class="k awo">Showing ' + y + ' because that\'s the year on the Leave tab.</div>';
+  if (y < cyr) lb += '<div class="k awo">Showing ' + y + ' because that\'s the year on the Leave tab.</div>';
   lb += '<div class="xsh">Leave tab</div>';
   lb += '<div class="it"><span><i class="dt" style="background:' + T.C.bg + '"></i>C days</span>' + tgl('lt:showC', SET.showC).replace('class="tg', 'class="tg sm') + '</div>';
   lb += '<div class="it"><span><i class="dt" style="background:' + T.S.bg + '"></i>Sick days</span>' + tgl('lt:showSick', SET.showSick).replace('class="tg', 'class="tg sm') + '</div>';
@@ -1130,7 +1129,7 @@ function restoreBackup(text) {
       SET.allow = typeof s.allow === 'number' ? s.allow : null;
       SET.carry = typeof s.carry === 'number' ? Math.min(2, Math.max(0, s.carry)) : 0;
       SET.years = {};
-      if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.max(0, v.carry) : null, hand: !!v.hand };
+      if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.max(0, v.carry) : 0 };
       if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry };
       SET.showC = s.showC !== false; SET.showSick = s.showSick !== false; SET.showOther = !!s.showOther; SET.showWhoOff = !!s.showWhoOff; SET.reqLook = ['stripe', 'fade', 'outline'].includes(s.reqLook) ? s.reqLook : 'stripe';
       SET.cAdj = {}; if (s.cAdj && typeof s.cAdj === 'object') for (const [yy, v] of Object.entries(s.cAdj)) if (/^\d{4}$/.test(yy) && typeof v === 'number') SET.cAdj[yy] = Math.max(-9, Math.min(9, v));
@@ -1434,16 +1433,12 @@ function holCounts(y) {
   Object.keys(D).forEach((k) => { if (!k.startsWith(y + '-') || D[k] !== 'H') return; if (isReq(k)) req++; else if (k <= t) used++; else booked++; });
   return { used, booked, req };
 }
-const approvedH = (y) => Object.keys(D).filter((k) => k.startsWith(y + '-') && D[k] === 'H' && !isReq(k)).length;
-// Carry-over worked out from what's left of last year's allowance (approved holiday only, never below 0).
-function workedCarry(y) { const P = allowFor(y - 1); if (!P || P.allow == null) return 0; return Math.max(0, P.allow + P.carry - approvedH(y - 1)); }
-// A year's allowance. Next year starts with this year's allowance; carry is worked out unless typed in by hand.
+// A year's allowance. Next year starts with this year's allowance; carried-over days are typed in (0 until you do).
 function allowFor(y) {
   const A = SET.years && SET.years[y], cy = curYear();
   const allow = A && A.allow != null ? A.allow : y > cy ? ((allowFor(y - 1) || {}).allow ?? null) : null;
   if (!A && allow == null) return null;
-  const hand = !!(A && A.hand), auto = !hand && (!A || A.carry == null);
-  return { allow, carry: auto ? workedCarry(y) : A.carry, hand, auto };
+  return { allow, carry: A && A.carry != null ? A.carry : 0 };
 }
 const leaveEditable = (y) => y >= curYear();
 
@@ -1471,7 +1466,7 @@ function leaveHtml() {
     if (p) past++; else up++;
     if (p && !S.showPast) return;
     const rq = runReq(r), t = T[r.t];
-    h += '<button class="lcard' + (rq ? ' rq' : '') + (p ? ' past' : '') + '" data-a="run" data-v="' + i + '" style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"><b>' + shortRange(r.s, r.e) + '</b><span>' + t.n + '</span>' + (rq ? '<span class="rqt">Requested</span>' : '') + '<span class="r">' + r.n + (r.n === 1 ? ' day' : ' days') + '</span></button>';
+    h += '<button class="lcard' + (rq ? ' rq' : '') + (p ? ' past' : '') + '" data-a="run" data-v="' + i + '" style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"><b>' + shortRange(r.s, r.e) + '</b><span class="lct">' + (runNote(r) ? esc(runNote(r)) : t.n) + '</span>' + (rq ? '<span class="rqt">Requested</span>' : '') + '<span class="r">' + r.n + (r.n === 1 ? ' day' : ' days') + '</span></button>';
   });
   if (!up) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
   if (past) h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave (' + past + ')') + '</button>';
@@ -1519,8 +1514,8 @@ function whoOffHtml(r) {
 function lvHtml() {
   const r = S.add.run, rq = runReq(r), note = runNote(r), ro = !leaveEditable(r.s.getFullYear()), t = T[r.t];
   let h = '<div class="pbar"><button data-a="acancel">‹ Leave</button>' + (ro ? '' : '<button class="pe" data-a="aedit">Edit</button>') + '</div>';
-  h += '<div class="lvt">' + longRange(r.s, r.e) + '</div><div class="lvm"><span class="chip" style="background:' + t.bg + ';color:' + t.fg + '">' + t.n + '</span>' + (rq ? '<span class="chip rqchip">Requested</span>' : '') + '<span class="k">' + r.n + (r.n === 1 ? ' day' : ' days') + ' counted · weekends not counted</span></div>';
-  if (note) h += '<div class="lnote"><span class="k">Note</span>' + esc(note) + '</div>';
+  // A note is the booking's title; the dates go underneath it.
+  h += (note ? '<div class="lvt">' + esc(note) + '</div><div class="lvd">' + longRange(r.s, r.e) + '</div>' : '<div class="lvt">' + longRange(r.s, r.e) + '</div>') + '<div class="lvm"><span class="chip" style="background:' + t.bg + ';color:' + t.fg + '">' + t.n + '</span>' + (rq ? '<span class="chip rqchip">Requested</span>' : '') + '<span class="k">' + r.n + (r.n === 1 ? ' day' : ' days') + ' counted · weekends not counted</span></div>';
   monthsOf(r.s, r.e).forEach(([y, m]) => { h += '<div class="lmt">' + MF[m] + ' ' + y + '</div>' + lcal(y, m, { s: ymd(r.s), e: ymd(r.e) }); });
   if (SET.showWhoOff) h += whoOffHtml(r);
   return h + '<div style="height:16px"></div>';
@@ -1669,7 +1664,6 @@ document.addEventListener('click', (e) => {
   }
   else if (a === 'acalnav') { const A = S.add; if (!A) return; let [yy, mm] = A.cm; mm += +v; if (mm < 0) { mm = 11; yy--; } if (mm > 11) { mm = 0; yy++; } A.cm = [yy, mm]; renderFade(null, 'push'); return; }
   else if (a === 'lwho') { if (S.add) S.add.wopen = !S.add.wopen; toggleSection(el, document.querySelector('#push .pscr')); return; }
-  else if (a === 'useworked') { const y = leaveYear(), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = null; Y.hand = false; save(); renderFade(null, 'seg'); return; }
   else if (a === 'run') { const r = leaveRuns(leaveYear())[+v]; if (!r) return; S.add = viewOf(r); pushScreen(); return; }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
   else if (a === 'bkimport') { document.getElementById('backupFile').click(); return; }
@@ -1697,8 +1691,8 @@ document.addEventListener('change', (e) => {
   if (t.id === 'aStart' && S.add) { S.add.start = t.value || S.add.start; if (pk(S.add.end) < pk(S.add.start)) S.add.end = S.add.start; S.add.phase = 0; S.add.cm = [pk(S.add.start).getFullYear(), pk(S.add.start).getMonth()]; render(); }
   else if (t.id === 'aEnd' && S.add) { S.add.end = t.value || S.add.end; S.add.phase = 0; render(); }
   else if (t.id === 'setName') { SET.name = t.value.trim() || SET.name; save(); render(); }
-  else if (t.id === 'setAllow') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: null, carry: null, hand: false }); Y.allow = Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null; if (Y.carry === undefined) Y.carry = null; save(); renderFade('#setAllow', 'seg'); }
-  else if (t.id === 'setCarry') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = Number.isFinite(n) ? Math.max(0, Math.min(99, n)) : 0; Y.hand = true; save(); renderFade('#setCarry', 'seg'); }
+  else if (t.id === 'setAllow') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: null, carry: 0 }); Y.allow = Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null; if (Y.carry == null) Y.carry = 0; save(); renderFade('#setAllow', 'seg'); }
+  else if (t.id === 'setCarry') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = Number.isFinite(n) ? Math.max(0, Math.min(99, n)) : 0; save(); renderFade('#setCarry', 'seg'); }
   else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
 // Swipe length slider: show the value while dragging, save when let go.

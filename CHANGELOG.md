@@ -2,6 +2,10 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.9.4 — 14 Nov 2026
+- A booking's note is now its title: booking cards show the note instead of the leave type, and the booking view shows the note as its heading with the dates underneath.
+- Carried-over days are no longer worked out for next year: you type them in (0 until you do), the same as this year.
+
 ## 0.9.3 — 14 Nov 2026
 - Leave tab reworked:
   - Counts as tiles: a big Holiday tile (left of your allowance, used, requested) that you tap to add leave; smaller tiles for holiday booked, C days left (tap for the bank holidays list) and sick days. An "Other leave" line appears only when your rota has Other days. The Add leave button is gone.
