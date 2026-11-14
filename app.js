@@ -1,7 +1,7 @@
 import { readRotaPdf, MONTHS } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.9.2 prototype';
+const VERSION = '0.9.3 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -34,7 +34,7 @@ const DN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ---------- data ----------
 let D = {};
-let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: true, cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [], anim: null };
+let SET = { name: 'Dimitri Jovanovic', allow: null, carry: 0, style: 'A', theme: 'auto', wmode: 'cal', showing: null, swapGroups: ['London', 'Dubai'], lastImport: null, lastBackup: null, years: {}, showC: true, showSick: false, showOther: false, showWhoOff: false, reqLook: 'stripe', cAdj: {}, removed: [], skipped: [], whoOff: [], whoHide: [], anim: null };
 // Everyone else from the rota: people[name] = { g: office, d: { 'YYYY-MM-DD': code } }; groups = office order from the most recent import.
 let TEAM = { people: {}, groups: [], latest: [], seen: {} };
 let canSave = true;
@@ -47,7 +47,7 @@ function load() {
     if (d && typeof d.days === 'object') D = d.days;
     if (d && d.set) SET = { ...SET, ...d.set };
     NOTES = cleanNotes(d && d.notes);
-    OFFICE = cleanOffice(d && d.office);
+    OFFICE = cleanOffice(d && d.office); UNDER = cleanUnder(d && d.under); LM = cleanLM(d && d.lmeta);
     if (d && d.team && d.team.people) TEAM = { people: d.team.people, groups: d.team.groups || [], latest: d.team.latest || latestFromGroups(d.team.groups || []), seen: d.team.seen || {} };
     // 0.5 kept one allowance; from 0.6 each year has its own.
     if (!SET.years || typeof SET.years !== 'object') SET.years = {};
@@ -60,7 +60,7 @@ function load() {
 }
 function save() {
   pruneDays();
-  try { localStorage.setItem(KEY, JSON.stringify({ v: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE })); canSave = true; }
+  try { localStorage.setItem(KEY, JSON.stringify({ v: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE, under: UNDER, lmeta: LM })); canSave = true; }
   catch (e) { canSave = false; }
 }
 
@@ -69,8 +69,9 @@ let NOTES = {};
 const ME_KEY = '@me';
 // Keep the original "was"; a day back on its "was" shift loses its note.
 function markChange(key, k, oldC, newC, kind, withN, id) {
-  const m = NOTES[key] || (NOTES[key] = {}), n = m[k], was = n ? n.was : (oldC || 'O');
-  if ((newC || 'O') === was) delete m[k];
+  // was = the day's first state before any change; '' means it was blank (nothing in the rota), not Off.
+  const m = NOTES[key] || (NOTES[key] = {}), n = m[k], was = n ? n.was : (oldC || '');
+  if ((newC || '') === was) delete m[k];
   else m[k] = kind === 'swap' ? { was, kind: 'swap', with: withN || '', id: id || '' } : { was, kind: 'edit' };
   if (!Object.keys(m).length) delete NOTES[key];
 }
@@ -82,7 +83,7 @@ function cleanNotes(src) {
   for (const [who, m] of Object.entries(src)) {
     if (!m || typeof m !== 'object') continue;
     const o = {};
-    for (const [k, v] of Object.entries(m)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && T[v.was] && (v.kind === 'swap' || v.kind === 'edit')) o[k] = v.kind === 'swap' ? { was: v.was, kind: 'swap', with: String(v.with || ''), id: String(v.id || '') } : { was: v.was, kind: 'edit' };
+    for (const [k, v] of Object.entries(m)) if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v && (T[v.was] || v.was === '') && (v.kind === 'swap' || v.kind === 'edit')) o[k] = v.kind === 'swap' ? { was: v.was, kind: 'swap', with: String(v.with || ''), id: String(v.id || '') } : { was: v.was, kind: 'edit' };
     if (Object.keys(o).length) out[who] = o;
   }
   return out;
@@ -91,7 +92,7 @@ function cleanNotes(src) {
 function swapPaint(k) {
   const key = viewingOther() ? SET.showing : ME_KEY, n = NOTES[key] && NOTES[key][k];
   if (!n || n.kind !== 'swap') return null;
-  return n.was === 'O' ? 'var(--offmark)' : T[n.was].bg;
+  return !n.was || n.was === 'O' ? 'var(--offmark)' : T[n.was].bg;
 }
 
 // ---------- team ----------
@@ -130,16 +131,12 @@ const S = {
 // ---------- leave maths ----------
 const curYear = () => today().getFullYear();
 const leaveYear = () => S.lyear || curYear();
-const allowFor = (y) => (SET.years && SET.years[y]) || null;
-// A new year starts with last year's allowance copied in (carry-over is typed in by hand).
+// A new year starts with last year's allowance copied in; carry-over is worked out (see allowFor) unless typed in.
 function ensureYear() {
   const y = curYear();
   if (SET.years[y]) return;
   const prev = Object.keys(SET.years).map(Number).filter((x) => x < y).sort((a, b) => b - a)[0];
-  if (prev != null && SET.years[prev].allow != null) {
-    const P = SET.years[prev], unused = P.allow + (P.carry || 0) - countYear(prev).H;
-    SET.years[y] = { allow: P.allow, carry: Math.max(0, Math.min(2, unused)) }; save();
-  }
+  if (prev != null && SET.years[prev].allow != null) { SET.years[y] = { allow: SET.years[prev].allow, carry: null, hand: false }; save(); }
 }
 // English bank holidays (England and Wales), worked out for any year. One-off extra days are not included.
 function easterSunday(y) {
@@ -237,14 +234,14 @@ function weekBody(off) {
     const d = addDays(s, i), k = ymd(d), c = DD[k], tod = k === tk ? ' tod' : '';
     const nm = '<div class="n"><b>' + DN[d.getDay()] + '</b>' + d.getDate() + ' ' + MN[d.getMonth()] + '</div>';
     if (!c) h += '<button class="card empty' + tod + '" data-a="day" data-k="' + k + '">' + nm + '<div class="l">–</div></button>';
-    else { const t = T[c], sp = swapPaint(k); h += '<button class="card' + tod + (sp ? ' swp' : '') + '" data-a="day" data-k="' + k + '" style="background-color:' + t.bg + ';color:' + t.fg + (sp ? ';--prev:' + sp : '') + '">' + nm + '<div class="r"><div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div>' + (TIMES[c] ? '<div class="tm">' + TIMES[c] + '</div>' : '') + '</div></button>'; }
+    else { const t = T[c], sp = swapPaint(k), rq = !viewingOther() && isReq(k); h += '<button class="card' + tod + (sp ? ' swp' : '') + (rq ? ' rq' : '') + '" data-a="day" data-k="' + k + '" style="background-color:' + t.bg + ';color:' + t.fg + (sp ? ';--prev:' + sp : '') + (rq ? ';--rqc:' + t.bg : '') + '">' + nm + '<div class="r"><div class="l">' + (c === 'M' || c === 'L' ? c : t.n) + '</div>' + (TIMES[c] ? '<div class="tm">' + TIMES[c] + '</div>' : '') + '</div></button>'; }
   }
   return h;
 }
 function cell(n, k, c) {
   const tod = k === ymd(today()) ? ' tod' : '', t = c ? T[c] : null, sp = t ? swapPaint(k) : null;
   const a = ' data-a="day" data-k="' + k + '" aria-label="' + n + (t ? ', ' + t.n : '') + (sp ? ', swapped' : '') + '"';
-  const cls = 'c' + tod + (sp ? ' swp' : ''), pv = sp ? ';--prev:' + sp : '';
+  const rq = !viewingOther() && t && isReq(k), cls = 'c' + tod + (sp ? ' swp' : '') + (rq ? ' rq' : ''), pv = (sp ? ';--prev:' + sp : '') + (rq ? ';--rqc:' + t.bg : '');
   if (!t) return '<button class="' + cls + '"' + a + ' style="background-color:var(--surface2)"><span class="dn">' + n + '</span></button>';
   if (SET.style === 'A') return '<button class="' + cls + '"' + a + ' style="background-color:' + t.bg + ';color:' + t.fg + pv + '"><span>' + n + '</span><b>' + t.sm + '</b></button>';
   if (SET.style === 'B') return '<button class="' + cls + '"' + a + ' style="background-color:var(--surface2)' + pv + '"><span class="dn">' + n + '</span><b class="bd" style="background:' + t.bg + ';color:' + t.fg + '">' + t.sm + '</b></button>';
@@ -267,97 +264,6 @@ function monthSummary(mo) {
   const DD = shown();
   for (let n = 1; n <= dim; n++) { const c = DD[y + '-' + p2(m + 1) + '-' + p2(n)]; if (c === 'M' || c === 'MA') nm++; if (c === 'L' || c === 'LA') nl++; }
   return (nm + nl) ? (nm + nl) + ' shifts · ' + nm + ' M · ' + nl + ' L' : 'No shifts yet';
-}
-function leaveHtml() {
-  const y = leaveYear(), cy = curYear(), isCur = y === cy, c = countYear(y), A = allowFor(y);
-  let h = '<div class="hd lhd"><b>Leave</b><button class="yr" data-a="yr" aria-haspopup="true" aria-expanded="' + !!S.ymenu + '">' + y + '</button>';
-  if (S.ymenu) { const other = isCur ? cy - 1 : cy; h += '<div class="ymenu"><button data-a="pickyear" data-v="' + other + '">' + other + '</button></div>'; }
-  h += '</div>';
-  const from = countingFrom(y);
-  if (!A || A.allow == null) {
-    if (isCur) {
-      h += '<div class="kr"><span class="k">Holiday used</span>' + (from != null ? '<span class="note">Counting from ' + MF[from] + '</span>' : '') + '</div><div class="big">' + c.H + ' <span class="k">days</span></div>';
-      h += '<div class="note" style="padding:4px 0 8px">Set your allowance in Settings → Leave.</div>';
-    } else {
-      h += '<div class="k">Holiday</div><div class="big">' + (c.H ? c.H + ' <span class="k">days used</span>' : 'No data') + '</div>';
-      if (!c.H) h += '<div class="note" style="margin-top:4px">Rotapp has no leave recorded for ' + y + '.</div>';
-    }
-  } else {
-    const tot = A.allow + A.carry, rem = tot - c.H;
-    h += '<div class="kr"><span class="k">Holiday remaining</span>' + (from != null ? '<span class="note">Counting from ' + MF[from] + '</span>' : '') + '</div>';
-    h += '<div class="big">' + rem + ' <span class="k">of ' + tot + ' days</span></div>';
-    h += '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, Math.round(c.H / (tot || 1) * 100))) + '%"></i></div>';
-    h += '<div class="k" style="margin-bottom:8px">' + A.allow + ' + ' + A.carry + ' carried over · ' + c.H + ' used</div>';
-  }
-  if (SET.showC) {
-    const e = cEarned(y), l = e - c.C;
-    h += '<div class="cblock"><div class="k">C days left</div><div class="big">' + l + ' <span class="k">of ' + e + ' earned</span></div>';
-    h += '<div class="bar"><i style="width:' + (e ? Math.max(0, Math.min(100, Math.round(c.C / e * 100))) : 0) + '%;background:' + T.C.bg + '"></i></div>';
-    h += '<div class="k">' + e + ' earned from bank holidays worked · ' + c.C + ' used</div>';
-    h += '<button class="rw" data-a="bhsheet" style="margin-top:8px"><span>Bank holidays worked</span><span class="k">' + bhWorked(y).length + ' ›</span></button></div>';
-  }
-  if (SET.showSick) h += '<div class="rw"><span><i class="sw" style="background:' + T.S.bg + '"></i>Sick</span><b>' + c.S + '</b></div>';
-  if (c.X) h += '<div class="rw"><span><i class="sw" style="background:' + T.X.bg + '"></i>Other</span><b>' + c.X + '</b></div>';
-  h += '<div class="sec">Booked leave</div>';
-  const t0 = today(), runs = leaveRuns(y);
-  const isPast = (r) => !isCur || r.e < t0;
-  let up = 0, past = 0;
-  runs.forEach((r, i) => {
-    const p = isPast(r);
-    if (p) past++; else up++;
-    if (p && !S.showPast) return;
-    const label = '<span>' + lab(r.s, r.e) + ' · ' + T[r.t].n + (p ? ' <span class="k">(past)</span>' : '') + '</span><b>' + r.n + (r.n === 1 ? ' day' : ' days') + '</b>';
-    h += isCur ? '<button class="rw" data-a="run" data-v="' + i + '">' + label + '</button>' : '<div class="rw ro">' + label + '</div>';
-  });
-  if (!up) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
-  if (past) h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave') + '</button>';
-  if (isCur) h += '<button class="btn" data-a="add">Add leave</button>';
-  return h;
-}
-function addDefaults() { const t = today(); return { type: 'H', start: ymd(t), end: ymd(t), edit: null }; }
-function addHtml() {
-  const A = S.add, y = curYear(), c = countYear(y), AY = allowFor(y);
-  const a = pk(A.start), b = pk(A.end), bad = b < a;
-  const days = bad ? [] : weekdaysIn(a, b), n = days.length;
-  let repl = 0;
-  days.forEach((d) => { if (D[ymd(d)]) repl++; });
-  // when editing, the old range is released first, so it does not count as used
-  let usedH = c.H;
-  if (A.edit && A.edit.t === 'H') usedH -= A.edit.n;
-  let h = '<div class="hd"><b>' + (A.edit ? 'Change leave' : 'Add leave') + '</b></div><div class="k">Type</div><div class="atype">' + segHtml('atype', [['H', 'Holiday'], ['S', 'Sick'], ['C', 'C']], A.type, false, true) + '</div>';
-  h += '<label class="k" for="aStart">Start date</label><input class="fld" id="aStart" type="date" value="' + A.start + '"><label class="k" for="aEnd">End date</label><input class="fld" id="aEnd" type="date" value="' + A.end + '">';
-  const f = new Date(a.getFullYear(), a.getMonth(), 1), dim = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate(), off = (f.getDay() + 6) % 7;
-  h += '<div class="k" style="margin-top:6px;text-align:center"><b>' + MF[f.getMonth()] + ' ' + f.getFullYear() + '</b></div><div class="g" style="margin-top:4px">';
-  ['M', 'T', 'W', 'T', 'F', 'S', 'S'].forEach((x) => { h += '<div class="w">' + x + '</div>'; });
-  for (let i = 0; i < off; i++) h += '<div></div>';
-  for (let i = 1; i <= dim; i++) {
-    const d = new Date(f.getFullYear(), f.getMonth(), i), w = d.getDay(), inr = !bad && d >= a && d <= b, wk = w === 0 || w === 6;
-    let s = '';
-    if (inr && !wk) s = 'background:' + T[A.type].bg + ';color:' + T[A.type].fg + ';font-weight:600';
-    else if (inr) s = 'border:1px dashed var(--muted)';
-    h += '<div class="mc" style="' + s + '">' + i + '</div>';
-  }
-  h += '</div>';
-  if (bad) h += '<div class="smry warn">The end date is before the start date.</div>';
-  else {
-    h += '<div class="smry"><b>' + n + (n === 1 ? ' day' : ' days') + ' counted</b> (weekends not counted)<br>';
-    if (A.type === 'H') {
-      if (!AY || AY.allow == null) h += 'Holiday used ' + usedH + ' → ' + (usedH + n) + '<br><span class="k">Set your allowance in Settings → Leave to see what is left.</span>';
-      else {
-        const rem = AY.allow + AY.carry - usedH;
-        h += rem + ' remaining → ' + (rem - n);
-        if (rem - n < 0) h += '<br><span class="warn">Over your allowance by ' + (n - rem) + (n - rem === 1 ? ' day' : ' days') + '. You can still save.</span>';
-      }
-    } else if (A.type === 'C') {
-      let l = cLeft(y);
-      if (A.edit && A.edit.t === 'C') l += A.edit.n;
-      h += 'C left ' + l + ' → ' + (l - n);
-      if (l - n < 0) h += '<br><span class="warn">Below zero by ' + (n - l) + (n - l === 1 ? ' day' : ' days') + '. You can still save.</span>';
-    } else h += 'Sick days used ' + (c.S) + ' → ' + (c.S + n);
-    h += '<br>Replaces ' + repl + ' existing ' + (repl === 1 ? 'day' : 'days') + '</div>';
-  }
-  h += '<div class="acts"><button data-a="acancel">Cancel</button><button class="p" data-a="asave">Save leave</button></div>';
-  return h;
 }
 const SICON = {
   imp: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
@@ -430,12 +336,17 @@ function settingsHtml() {
   ab += '<div class="it"><span>Theme</span>' + segHtml('themeset', [['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], SET.theme) + '</div>';
   ab += animSettingsHtml();
   h += card('look', 'Appearance', sty[SET.style] + ' · ' + th[SET.theme] + ' · Animations ' + animSummary(), ab);
-  // Leave: this year's allowance, and which counts show on the Leave tab
-  const y = curYear(), A = allowFor(y);
-  let lb = '<div class="it"><label for="setAllow">Holiday allowance (' + y + ')</label><input class="fld num" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (A && A.allow != null ? A.allow : '') + '" placeholder="–"></div>';
-  lb += '<div class="it"><label for="setCarry">Carried over <span class="k">(max 2)</span></label><input class="fld num" id="setCarry" type="number" inputmode="numeric" min="0" max="2" value="' + (A ? A.carry : 0) + '"></div>';
-  lb += '<div class="it col"><span>Show on the Leave tab</span><div class="lticks"><label><input type="checkbox" data-lt="showC"' + (SET.showC ? ' checked' : '') + '> C</label><label><input type="checkbox" data-lt="showSick"' + (SET.showSick ? ' checked' : '') + '> Sick</label></div></div>';
-  lb += '<div class="it col"><span class="k">A new year starts with last year\'s allowance copied in. You can change it here.</span></div>';
+  // Leave: the allowance for the year on the Leave tab, and what shows on the Leave tab.
+  const y = leaveYear(), A = allowFor(y), ro = !leaveEditable(y), cyr = curYear();
+  let lb = '<div class="xsh">Allowance · ' + y + (ro ? ' (read-only)' : '') + '</div><div class="alw2"><label class="af"><input class="fld num" id="setAllow" type="number" inputmode="numeric" min="0" max="99" value="' + (A && A.allow != null ? A.allow : '') + '" placeholder="–"' + (ro ? ' disabled' : '') + '><span>Allowance</span></label><span class="op">+</span><label class="af"><input class="fld num" id="setCarry" type="number" inputmode="numeric" min="0" max="99" value="' + (A ? A.carry : 0) + '"' + (ro ? ' disabled' : '') + '><span>Carried over</span></label><div class="tot"><b>' + (A && A.allow != null ? A.allow + A.carry : '–') + '</b><span>days in total</span></div></div>';
+  if (y > cyr) lb += '<div class="k awo">' + (A && A.hand ? 'Set by you. <button data-a="useworked">Use worked-out (' + workedCarry(y) + ')</button>' : 'Carried over worked out from what\'s left in ' + (y - 1) + ' (approved holiday only).') + '</div>';
+  else if (y < cyr) lb += '<div class="k awo">Showing ' + y + ' because that\'s the year on the Leave tab.</div>';
+  lb += '<div class="xsh">Leave tab</div>';
+  lb += '<div class="it"><span><i class="dt" style="background:' + T.C.bg + '"></i>C days</span>' + tgl('lt:showC', SET.showC).replace('class="tg', 'class="tg sm') + '</div>';
+  lb += '<div class="it"><span><i class="dt" style="background:' + T.S.bg + '"></i>Sick days</span>' + tgl('lt:showSick', SET.showSick).replace('class="tg', 'class="tg sm') + '</div>';
+  lb += '<div class="it"><span><i class="dt" style="background:' + T.X.bg + '"></i>Other leave<small class="k">Only appears when your rota has Other days</small></span>' + tgl('lt:showOther', SET.showOther).replace('class="tg', 'class="tg sm') + '</div>';
+  lb += '<div class="it"><span>Show who else is off<small class="k">On booked leave, using your Who\'s on people</small></span>' + tgl('lt:showWhoOff', SET.showWhoOff) + '</div>';
+  lb += '<div class="it alcf"><span>Requested leave looks</span>' + segHtml('reqlook', [['stripe', 'Stripes'], ['fade', 'Faded'], ['outline', 'Outline']], SET.reqLook || 'stripe') + '</div>';
   h += card('leave', 'Leave', (A && A.allow != null ? A.allow + ' + ' + A.carry + ' days · ' + y : 'Allowance not set'), lb);
   h += '<div class="foot">Rotapp ' + VERSION + '</div>';
   return '<div class="setwrap">' + h + '</div>';
@@ -754,25 +665,25 @@ function undoChange(k) {
     const mine = NOTES[ME_KEY], days = Object.keys(mine).filter((x) => mine[x].kind === 'swap' && (x === k || (n.id && mine[x].id === n.id)));
     const p = TEAM.people[n.with], theirs = NOTES[n.with] || {};
     days.forEach((x) => {
-      const w = mine[x].was; if (w === 'O' && !D[x]) delete D[x]; else D[x] = w;
+      const w = mine[x].was; if (!w) delete D[x]; else D[x] = w;
       clearNote(ME_KEY, x);
       const t = theirs[x];
-      if (p && t && t.kind === 'swap' && (!n.id || t.id === n.id)) { p.d[x] = t.was; clearNote(n.with, x); }
+      if (p && t && t.kind === 'swap' && (!n.id || t.id === n.id)) { if (t.was) p.d[x] = t.was; else delete p.d[x]; clearNote(n.with, x); }
     });
     msg = 'Swap with ' + firstName(n.with) + ' undone';
-  } else { D[k] = n.was; clearNote(ME_KEY, k); msg = 'Change undone'; }
+  } else { if (n.was) D[k] = n.was; else delete D[k]; clearNote(ME_KEY, k); msg = 'Change undone'; }
   save(); renderFade(null, 'sheet'); toast(msg);
 }
 function askUndo(k) {
   const n = NOTES[ME_KEY] && NOTES[ME_KEY][k]; if (!n) return;
   S.cf = n.kind === 'swap'
     ? { title: 'Undo swap with ' + firstName(n.with) + '?', text: 'You both go back to your original shifts on every day in this swap.', yes: 'Undo swap', k }
-    : { title: 'Undo change to ' + longDate(k) + '?', text: 'The day goes back to ' + T[n.was].n + '.', yes: 'Undo', k };
+    : { title: 'Undo change to ' + longDate(k) + '?', text: n.was ? 'The day goes back to ' + T[n.was].n + '.' : 'The day goes back to blank (nothing set).', yes: 'Undo', k };
   render();
 }
 
 // ---------- day editor ----------
-const echip = (c, was) => '<span class="echip' + (was ? ' was' : '') + '" style="background:' + (c === 'O' ? 'var(--offsolid)' : T[c].bg) + ';color:' + (c === 'O' ? 'var(--text2)' : T[c].fg) + '">' + T[c].sm + '</span>';
+const echip = (c, was) => !c ? '<span class="echip' + (was ? ' was' : '') + '" style="background:var(--surface2);color:var(--muted)">–</span>' : '<span class="echip' + (was ? ' was' : '') + '" style="background:' + (c === 'O' ? 'var(--offsolid)' : T[c].bg) + ';color:' + (c === 'O' ? 'var(--text2)' : T[c].fg) + '">' + T[c].sm + '</span>';
 // Edit line under the date: the old shift crossed out, the new one, and who changed it.
 function editLine(k, cur) {
   const n = NOTES[ME_KEY] && NOTES[ME_KEY][k];
@@ -971,7 +882,7 @@ function runPage(r) {
     // Change dates closes this sheet and pushes Change leave at the same time.
     runedit: () => { closeSheet(); S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r }; pushScreen(); },
     rundel: () => {
-      for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { D[k] = 'O'; clearNote(ME_KEY, k); } }
+      for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { freeLeaveDay(k); clearNote(ME_KEY, k); } }
       save(); renderFade(null, 'sheet'); closeSheet(); toast('Leave deleted');
     },
   };
@@ -1135,11 +1046,14 @@ function applyImport() {
   const I = S.imp, on = I.months.filter((M) => M.on);
   if (!on.length) { toast('Tick at least one month'); return; }
   let replaced = 0, added = 0;
+  const gone = [];
   on.forEach((M) => {
-    const pre = monthKey(M.y, M.m);
-    Object.keys(D).forEach((k) => { if (k.startsWith(pre)) delete D[k]; });
-    clearMonthNotes(ME_KEY, pre);
+    const pre = monthKey(M.y, M.m), before = {};
+    Object.keys(D).forEach((k) => { if (k.startsWith(pre)) { if (LEAVE[D[k]]) before[k] = D[k]; delete D[k]; } });
+    clearMonthNotes(ME_KEY, pre); Object.keys(UNDER).forEach((x) => { if (x.startsWith(pre)) delete UNDER[x]; });
     M.days.forEach((d) => { D[pre + p2(d.n)] = d.code === '?' ? 'O' : d.code; });
+    // The rota takes priority. Your leave that it shows stays (note kept, now approved); leave it doesn't show is removed.
+    Object.entries(before).forEach(([k, t]) => { if (D[k] === t) { if (LM[k]) { delete LM[k].r; if (!LM[k].n) delete LM[k]; } } else { gone.push([k, t]); delete LM[k]; } });
     if (M.exists) replaced++; else added++;
     // Everyone else: replace their month too.
     for (const [name, p] of Object.entries(M.team.people)) {
@@ -1180,13 +1094,22 @@ function applyImport() {
   const t = today();
   S.moff = (first.y - t.getFullYear()) * 12 + (first.m - t.getMonth());
   toast(on.length === 1 ? MF[first.m] + (first.exists ? ' replaced' : ' added') : on.length + ' months imported');
+  if (gone.length) {
+    const runs = [];
+    gone.sort((x, y) => (x[0] < y[0] ? -1 : 1)).forEach(([k, t]) => {
+      const d = pk(k), r = runs[runs.length - 1];
+      if (r && r.t === t && weekdaysIn(addDays(r.e, 1), addDays(d, -1)).length === 0) r.e = d; else runs.push({ t, s: d, e: d });
+    });
+    S.cf = { title: 'Leave not on the rota', text: 'The imported rota doesn\'t show this leave, so it has been removed:', list: runs.map((r) => shortRange(r.s, r.e) + ' · ' + T[r.t].n), info: true };
+    render();
+  }
 }
 
 // ---------- backup ----------
 function exportBackup() {
   try {
     SET.lastBackup = ymd(today()); save();
-    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE })], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'Rotapp', version: 3, days: D, set: SET, team: TEAM, notes: NOTES, office: OFFICE, under: UNDER, lmeta: LM })], { type: 'application/json' });
     const a = document.createElement('a'), url = URL.createObjectURL(blob);
     a.href = url; a.download = 'rotapp-backup-' + ymd(today()) + '.json';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -1207,9 +1130,9 @@ function restoreBackup(text) {
       SET.allow = typeof s.allow === 'number' ? s.allow : null;
       SET.carry = typeof s.carry === 'number' ? Math.min(2, Math.max(0, s.carry)) : 0;
       SET.years = {};
-      if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.min(2, Math.max(0, v.carry)) : 0 };
+      if (s.years && typeof s.years === 'object') for (const [yy, v] of Object.entries(s.years)) if (/^\d{4}$/.test(yy) && v && typeof v === 'object') SET.years[yy] = { allow: typeof v.allow === 'number' ? v.allow : null, carry: typeof v.carry === 'number' ? Math.max(0, v.carry) : null, hand: !!v.hand };
       if (SET.allow != null && !SET.years[curYear()]) SET.years[curYear()] = { allow: SET.allow, carry: SET.carry };
-      SET.showC = s.showC !== false; SET.showSick = s.showSick !== false;
+      SET.showC = s.showC !== false; SET.showSick = s.showSick !== false; SET.showOther = !!s.showOther; SET.showWhoOff = !!s.showWhoOff; SET.reqLook = ['stripe', 'fade', 'outline'].includes(s.reqLook) ? s.reqLook : 'stripe';
       SET.cAdj = {}; if (s.cAdj && typeof s.cAdj === 'object') for (const [yy, v] of Object.entries(s.cAdj)) if (/^\d{4}$/.test(yy) && typeof v === 'number') SET.cAdj[yy] = Math.max(-9, Math.min(9, v));
       SET.removed = Array.isArray(s.removed) ? s.removed.map(String) : [];
       SET.skipped = Array.isArray(s.skipped) ? s.skipped.map(String) : [];
@@ -1225,7 +1148,7 @@ function restoreBackup(text) {
       if (typeof s.lastBackup === 'string') SET.lastBackup = s.lastBackup;
     }
     NOTES = cleanNotes(d.notes);
-    OFFICE = cleanOffice(d.office);
+    OFFICE = cleanOffice(d.office); UNDER = cleanUnder(d.under); LM = cleanLM(d.lmeta);
     TEAM = { people: {}, groups: [], latest: [], seen: {} };
     if (d.team && typeof d.team.people === 'object' && d.team.people) {
       for (const [n, p] of Object.entries(d.team.people)) {
@@ -1302,13 +1225,14 @@ function renderFade(keep, area) {
 function renderNow() {
   const t = S.tab, scr = document.getElementById('scr'), main = document.getElementById('main'), top = main.scrollTop;
   document.documentElement.setAttribute('data-theme', SET.theme);
+  document.documentElement.dataset.rq = SET.reqLook || 'stripe';
   document.documentElement.classList.toggle('noanim', reduceMotion());
   const mt = document.querySelector('meta[name=theme-color]'); if (mt) mt.content = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#131416';
   scr.innerHTML = t === 'week' || t === 'month' ? pagedHtml(t) : t === 'leave' ? leaveHtml() : settingsHtml();
   bindTrack();
   main.classList.toggle('grouped', t === 'settings');
   main.scrollTop = top;
-  if (PUSH.on && S.add) { const push = document.getElementById('push'), st = push.scrollTop; push.querySelector('.pscr').innerHTML = addHtml(); push.scrollTop = st; }
+  if (PUSH.on && S.add) { const push = document.getElementById('push'), st = push.scrollTop; push.querySelector('.pscr').innerHTML = lsHtml(); push.scrollTop = st; }
   modalSync();
   markMixed(document);
   let tb = isWide() ? '<div class="brand">Rotapp</div>' : '';
@@ -1320,16 +1244,20 @@ function renderNow() {
 }
 // ---------- toasts: drop in from the top, then fade away ----------
 let toastT = 0, toastA = null;
-function toast(msg) {
+// undo: optional; adds an Undo button and keeps the toast up a little longer.
+function toast(msg, undo) {
   if (!skipToastRender) render();
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  S.tundo = undo || null;
+  t.innerHTML = esc(msg) + (undo ? '<button data-a="tundo">Undo</button>' : '');
+  t.classList.toggle('hasu', !!undo);
+  const stay = undo ? 4500 : 1800;
   if (toastA) toastA.cancel();
   clearTimeout(toastT);
-  if (motionOff('toast')) { t.style.opacity = 1; t.style.transform = 'translate3d(-50%,0,0)'; toastT = setTimeout(() => { t.style.opacity = 0; }, 1800); return; }
+  if (motionOff('toast')) { t.style.opacity = 1; t.style.transform = 'translate3d(-50%,0,0)'; toastT = setTimeout(() => { t.style.opacity = 0; t.classList.remove('hasu'); }, stay); return; }
   t.style.opacity = ''; t.style.transform = '';
   toastA = t.animate([{ opacity: 0, transform: 'translate3d(-50%,-24px,0)' }, { opacity: 1, transform: 'translate3d(-50%,0,0)' }], { duration: dms(320), easing: EASE_SHEET, fill: 'forwards' });
-  toastT = setTimeout(() => { toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: dms(220), easing: 'ease-in', fill: 'forwards' }); }, 1800);
+  toastT = setTimeout(() => { t.classList.remove('hasu'); toastA = t.animate([{ opacity: 1, transform: 'translate3d(-50%,0,0)' }, { opacity: 0, transform: 'translate3d(-50%,-12px,0)' }], { duration: dms(220), easing: 'ease-in', fill: 'forwards' }); }, stay);
 }
 // ---------- segmented controls: the highlight slides; labels switch at once ----------
 // col: the highlight takes each option's shift colour, fading between colours as it slides (Add leave type).
@@ -1353,6 +1281,7 @@ function switchTap(el) {
   const ms = motionOff('seg') ? 0 : dms(250), kk = el.dataset.k, on = !el.classList.contains('on');
   const from = getComputedStyle(el.querySelector('i')).transform;
   if (kk.startsWith('area:')) SET.anim.areas[kk.slice(5)] = on;
+  else if (kk.startsWith('lt:')) SET[kk.slice(3)] = on;
   else SET.anim[kk] = on;
   save();
   const sel = '.tg[data-k="' + kk + '"]';
@@ -1372,6 +1301,7 @@ function segTap(btn) {
   SEGACT[act](v);
   const sel = '.seg2:has(> [data-act="' + act + '"])';
   renderFade(sel, 'seg');
+  if (S.afterSeg) { const f = S.afterSeg; S.afterSeg = null; f(); }
   const ns = document.querySelector(sel); if (!ns || motionOff('seg')) return;
   const nt = ns.querySelector('.thumb'), o = { duration: dms(300), easing: EASE_SHEET };
   nt.style.transform = 'translate3d(' + to + 'px,0,0)';
@@ -1388,7 +1318,7 @@ function pushCancel() { pushEls().forEach((el) => el.getAnimations().forEach((a)
 function pushScreen() {
   const [push, main, shade] = pushEls();
   pushCancel();
-  push.innerHTML = '<div class="pscr">' + addHtml() + '</div>'; push.scrollTop = 0;
+  push.innerHTML = '<div class="pscr">' + lsHtml() + '</div>'; push.scrollTop = 0;
   push.hidden = false; shade.hidden = false; PUSH.on = true;
   if (motionOff('push')) { shade.style.opacity = 0; return; }
   shade.style.opacity = '';
@@ -1416,7 +1346,7 @@ function rmInner() { return '<h3>Remove ' + esc(S.rm) + '?</h3><div class="k">Th
 function modalSync() {
   const key = S.imp ? 'imp:' + S.imp.step : S.rm ? 'rm' : S.cf ? 'cf' : null;
   if (!key) { if (MO.key) modalClose(); MO.key = null; return; }
-  const html = S.imp ? impInner() : S.rm ? rmInner() : '<h3>' + esc(S.cf.title) + '</h3><div class="k">' + esc(S.cf.text) + '</div><div class="acts"><button data-a="cfno">Cancel</button><button class="p" data-a="cfyes">' + esc(S.cf.yes) + '</button></div>';
+  const html = S.imp ? impInner() : S.rm ? rmInner() : '<h3>' + esc(S.cf.title) + '</h3><div class="k">' + esc(S.cf.text) + '</div>' + (S.cf.list ? '<ul class="cfl">' + S.cf.list.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '') + (S.cf.info ? '<div class="acts one"><button class="p" data-a="cfno">OK</button></div>' : '<div class="acts"><button data-a="cfno">Cancel</button><button class="p" data-a="cfyes">' + esc(S.cf.yes) + '</button></div>');
   moDim.dataset.a = S.imp ? 'impcancel' : S.rm ? 'rmno' : 'cfno';
   if (!MO.key || MO.closing) {
     moCancel(); MO.closing = false; MO.dipping = false;
@@ -1460,13 +1390,226 @@ const isWeekday = (k) => { const w = pk(k).getDay(); return w > 0 && w < 6; };
 const canOffice = (k, c) => c === 'M' && isWeekday(k);
 function cleanOffice(o) { const r = {}; if (o && typeof o === 'object') Object.keys(o).forEach((k) => { if (/^\d{4}-\d{2}-\d{2}$/.test(k) && o[k]) r[k] = 1; }); return r; }
 // An office mark only lives on a weekday M: if the day changes (edit, swap, import, leave), the mark goes.
-function pruneDays() { Object.keys(OFFICE).forEach((k) => { if (!canOffice(k, D[k])) delete OFFICE[k]; }); }
+function pruneDays() {
+  Object.keys(OFFICE).forEach((k) => { if (!canOffice(k, D[k])) delete OFFICE[k]; });
+  Object.keys(UNDER).forEach((k) => { if (!LEAVE[D[k]]) delete UNDER[k]; });
+  Object.keys(LM).forEach((k) => { if (!LEAVE[D[k]]) delete LM[k]; else if (D[k] === 'S' && LM[k].r) { delete LM[k].r; if (!LM[k].n) delete LM[k]; } });
+}
+// UNDER[ymd] = what a day was before Add leave covered it ('' = blank), so deleting or shortening leave puts it back.
+// Leave with no record (e.g. imported) goes back to Off.
+let UNDER = {};
+function cleanUnder(o) { const r = {}; if (o && typeof o === 'object') Object.entries(o).forEach(([k, v]) => { if (/^\d{4}-\d{2}-\d{2}$/.test(k) && (v === '' || (T[v] && !LEAVE[v]))) r[k] = v; }); return r; }
+function freeLeaveDay(k) { const u = UNDER[k]; delete UNDER[k]; if (u === undefined) D[k] = 'O'; else if (u) D[k] = u; else delete D[k]; }
 // Day editor: show the Office pill only while the chosen shift is a weekday M.
 function deRefresh() {
   const pg = curPage(); if (!pg || !S.de) return;
   const pw = pg.top.querySelector('.opw'), c = S.de.pick || D[S.de.k];
   if (pw) pw.innerHTML = canOffice(S.de.k, c) ? '<button class="opill' + (S.de.office ? ' on' : '') + '" data-a="office" aria-pressed="' + S.de.office + '">Office</button>' : '';
 }
+
+// ---------- leave: requested / approved and notes ----------
+// LM[ymd] = { r: 1 if requested, n: note } on leave days. Bookings are runs of days, so if a booking splits both parts
+// keep the note, and if two join their notes are combined. Imported leave and day-editor leave are approved, with no note.
+let LM = {};
+function cleanLM(o) {
+  const r = {};
+  if (o && typeof o === 'object') Object.entries(o).forEach(([k, v]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v || typeof v !== 'object') return;
+    const e = {}; if (v.r) e.r = 1; if (typeof v.n === 'string' && v.n.trim()) e.n = v.n.trim().slice(0, 120);
+    if (e.r || e.n) r[k] = e;
+  });
+  return r;
+}
+const isReq = (k) => !!(LM[k] && LM[k].r && LEAVE[D[k]] && D[k] !== 'S');
+function runDays(r) { const out = []; for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) out.push(k); } return out; }
+const runReq = (r) => runDays(r).some(isReq);
+function runNote(r) { const ns = []; runDays(r).forEach((k) => { const n = LM[k] && LM[k].n; if (n && !ns.includes(n)) ns.push(n); }); return ns.join(' · '); }
+const dlab = (d) => DN[d.getDay()] + ' ' + d.getDate() + ' ' + MN[d.getMonth()];
+const longRange = (a, b) => (ymd(a) === ymd(b) ? dlab(a) : dlab(a) + ' – ' + dlab(b));
+const shortRange = (a, b) => (ymd(a) === ymd(b) ? a.getDate() + ' ' + MN[a.getMonth()] : a.getMonth() === b.getMonth() ? a.getDate() + '–' + b.getDate() + ' ' + MN[b.getMonth()] : a.getDate() + ' ' + MN[a.getMonth()] + ' – ' + b.getDate() + ' ' + MN[b.getMonth()]);
+const tint = (c, p) => 'color-mix(in srgb,' + c + ' ' + p + '%,transparent)';
+// Holiday split into used (up to today), booked (later) and requested (not yet approved).
+function holCounts(y) {
+  const t = ymd(today()); let used = 0, booked = 0, req = 0;
+  Object.keys(D).forEach((k) => { if (!k.startsWith(y + '-') || D[k] !== 'H') return; if (isReq(k)) req++; else if (k <= t) used++; else booked++; });
+  return { used, booked, req };
+}
+const approvedH = (y) => Object.keys(D).filter((k) => k.startsWith(y + '-') && D[k] === 'H' && !isReq(k)).length;
+// Carry-over worked out from what's left of last year's allowance (approved holiday only, never below 0).
+function workedCarry(y) { const P = allowFor(y - 1); if (!P || P.allow == null) return 0; return Math.max(0, P.allow + P.carry - approvedH(y - 1)); }
+// A year's allowance. Next year starts with this year's allowance; carry is worked out unless typed in by hand.
+function allowFor(y) {
+  const A = SET.years && SET.years[y], cy = curYear();
+  const allow = A && A.allow != null ? A.allow : y > cy ? ((allowFor(y - 1) || {}).allow ?? null) : null;
+  if (!A && allow == null) return null;
+  const hand = !!(A && A.hand), auto = !hand && (!A || A.carry == null);
+  return { allow, carry: auto ? workedCarry(y) : A.carry, hand, auto };
+}
+const leaveEditable = (y) => y >= curYear();
+
+// ---------- Leave tab ----------
+function leaveHtml() {
+  const y = leaveYear(), cy = curYear(), ro = !leaveEditable(y), c = countYear(y), A = allowFor(y), hc = holCounts(y);
+  let h = '<div class="hd lhd"><b>Leave</b><button class="yr" data-a="yr" aria-haspopup="true" aria-expanded="' + !!S.ymenu + '">' + y + ' ▾</button>';
+  if (S.ymenu) h += '<div class="ymenu">' + [[cy - 1, 'read-only'], [cy, 'this year'], [cy + 1, 'next year']].map(([v, l]) => '<button data-a="pickyear" data-v="' + v + '"><span class="ck">' + (v === y ? '✓' : '') + '</span>' + v + '<small>' + l + '</small></button>').join('') + '</div>';
+  h += '</div>';
+  if (ro) h += '<div class="lro">' + y + ' is read-only.</div>';
+  const set = A && A.allow != null, tot = set ? A.allow + A.carry : 0;
+  h += '<div class="ltiles"><button class="lt big"' + (ro ? ' disabled' : ' data-a="add"') + ' style="background:' + tint(T.H.bg, 14) + '">' + (ro ? '' : '<span class="tap">Tap to add leave ›</span>');
+  h += '<span class="lb"><span class="l"><i class="dt" style="background:' + T.H.bg + '"></i>' + (set ? 'Holiday left' : 'Holiday taken') + '</span><span class="n">' + (set ? (tot - hc.used - hc.booked) + ' <small>of ' + tot + '</small>' : (hc.used + hc.booked) + ' <small>' + (hc.used + hc.booked === 1 ? 'day' : 'days') + '</small>') + '</span>' + (set ? '' : '<span class="k">Set your allowance in Settings › Leave.</span>') + '</span>';
+  h += '<span class="k r">' + hc.used + ' used' + (hc.req ? '<br><b>' + hc.req + ' requested</b>' : '') + '</span></button>';
+  const sm = ['<div class="lt" style="background:' + tint(T.H.bg, 7) + '"><span class="n">' + hc.booked + '</span><span class="l">Holiday booked</span></div>'];
+  if (SET.showC) { const e = cEarned(y); sm.push('<button class="lt" data-a="bhsheet" style="background:' + tint(T.C.bg, 16) + '"><span class="n">' + (e - c.C) + ' <small>of ' + e + '</small></span><span class="l"><i class="dt" style="background:' + T.C.bg + '"></i>C days left</span></button>'); }
+  if (SET.showSick) sm.push('<div class="lt" style="background:' + tint(T.S.bg, 14) + '"><span class="n">' + c.S + '</span><span class="l"><i class="dt" style="background:' + T.S.bg + '"></i>Sick days</span></div>');
+  h += '</div><div class="ltiles sm" style="grid-template-columns:repeat(' + sm.length + ',minmax(0,1fr))">' + sm.join('') + '</div>';
+  if (SET.showOther && c.X) h += '<div class="loth"><i class="dt" style="background:' + T.X.bg + '"></i>Other leave<b>' + c.X + (c.X === 1 ? ' day' : ' days') + '</b></div>';
+  h += '<div class="sec">Booked leave</div>';
+  const t0 = today(), runs = leaveRuns(y), isPast = (r) => y < cy || (y === cy && r.e < t0);
+  let up = 0, past = 0;
+  runs.forEach((r, i) => {
+    const p = isPast(r);
+    if (p) past++; else up++;
+    if (p && !S.showPast) return;
+    const rq = runReq(r), t = T[r.t];
+    h += '<button class="lcard' + (rq ? ' rq' : '') + (p ? ' past' : '') + '" data-a="run" data-v="' + i + '" style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"><b>' + shortRange(r.s, r.e) + '</b><span>' + t.n + '</span>' + (rq ? '<span class="rqt">Requested</span>' : '') + '<span class="r">' + r.n + (r.n === 1 ? ' day' : ' days') + '</span></button>';
+  });
+  if (!up) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
+  if (past) h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave (' + past + ')') + '</button>';
+  return h;
+}
+
+// ---------- booked leave view, Add leave and Change leave (one pushed screen) ----------
+// S.add = { mode: 'add' | 'view' | 'edit', type, st: 'R' | 'A', start, end, note, cm: [year, month], phase, run, wopen }
+function addDefaults() {
+  const y = leaveYear(), t = today();
+  const d = y > t.getFullYear() ? (() => { let x = new Date(y, 0, 1); while (x.getDay() === 0 || x.getDay() === 6) x = addDays(x, 1); return x; })() : t;
+  return { mode: 'add', type: 'H', st: 'R', start: ymd(d), end: ymd(d), note: '', cm: [d.getFullYear(), d.getMonth()], phase: 0, run: null };
+}
+function viewOf(r) { return { mode: 'view', type: r.t === 'S' || r.t === 'C' ? r.t : 'H', st: runReq(r) ? 'R' : 'A', start: ymd(r.s), end: ymd(r.e), note: runNote(r), cm: [r.s.getFullYear(), r.s.getMonth()], phase: 0, run: r, wopen: false }; }
+const lsHtml = () => (S.add.mode === 'view' ? lvHtml() : lfHtml());
+// Month grid for the leave screens: your shifts, with the chosen range in the leave type's colour.
+function lcal(y, m, o) {
+  const off = (new Date(y, m, 1).getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate(), old = o.old || {};
+  let h = '<div class="lcg">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('') + '<div></div>'.repeat(off);
+  for (let n = 1; n <= dim; n++) {
+    const d = new Date(y, m, n), k = ymd(d), wd = d.getDay() > 0 && d.getDay() < 6, inr = !!o.s && k >= o.s && k <= o.e;
+    let c = D[k], rq = !o.t && isReq(k);
+    if (o.t && old[k] && !(inr && wd)) { const u = UNDER[k]; c = u === undefined ? 'O' : u || undefined; }
+    if (o.t && inr && wd) { c = o.t; rq = o.rq; }
+    const t = c ? T[c] : null, tag = o.pick ? 'button' : 'div';
+    const cls = 'lc' + (inr ? ' in' : '') + (inr && !wd ? ' we' : '') + (rq ? ' rq' : '') + (t ? '' : ' nr') + (k === ymd(today()) ? ' tod' : '');
+    h += '<' + tag + (o.pick ? ' data-a="acal" data-k="' + k + '"' : '') + ' class="' + cls + '"' + (t ? ' style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"' : '') + '><span>' + n + '</span><b>' + (t ? (c === 'O' ? '' : t.sm) : '–') + '</b></' + tag + '>';
+  }
+  return h + '</div>';
+}
+function monthsOf(a, b) { const out = []; for (let y = a.getFullYear(), m = a.getMonth(); y < b.getFullYear() || (y === b.getFullYear() && m <= b.getMonth()); m === 11 ? (y++, m = 0) : m++) out.push([y, m]); return out; }
+function whoOffHtml(r) {
+  const list = [];
+  for (const [n, p] of Object.entries(TEAM.people)) {
+    if (n === SET.name || !whoShows(n, p.g)) continue;
+    let a = null, b = null, t = null;
+    for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const c = p.d[ymd(d)]; if (LEAVE[c]) { a = a || d; b = d; t = t || c; } }
+    if (a) list.push([n, t, a, b]);
+  }
+  const open = !!S.add.wopen;
+  let h = '<div class="xw wsec lwo' + xopen(open) + '"><div class="xi"><button class="wsh" data-a="lwho" aria-expanded="' + open + '"><span class="lwn">Who else is off</span><span class="cnt">' + (list.length ? list.length + (list.length === 1 ? ' person' : ' people') : 'No one') + '</span><span class="chev">▾</span></button><div class="xb"><div class="wsgb">';
+  h += list.length ? list.map(([n, t, a, b]) => '<div class="wpr">' + stag(t) + '<span class="lwp">' + esc(n) + '</span><span class="k">' + shortRange(a, b) + '</span></div>').join('') : '<div class="k" style="padding:8px 0">No one else is off.</div>';
+  return h + '</div></div></div></div>';
+}
+function lvHtml() {
+  const r = S.add.run, rq = runReq(r), note = runNote(r), ro = !leaveEditable(r.s.getFullYear()), t = T[r.t];
+  let h = '<div class="pbar"><button data-a="acancel">‹ Leave</button>' + (ro ? '' : '<button class="pe" data-a="aedit">Edit</button>') + '</div>';
+  h += '<div class="lvt">' + longRange(r.s, r.e) + '</div><div class="lvm"><span class="chip" style="background:' + t.bg + ';color:' + t.fg + '">' + t.n + '</span>' + (rq ? '<span class="chip rqchip">Requested</span>' : '') + '<span class="k">' + r.n + (r.n === 1 ? ' day' : ' days') + ' counted · weekends not counted</span></div>';
+  if (note) h += '<div class="lnote"><span class="k">Note</span>' + esc(note) + '</div>';
+  monthsOf(r.s, r.e).forEach(([y, m]) => { h += '<div class="lmt">' + MF[m] + ' ' + y + '</div>' + lcal(y, m, { s: ymd(r.s), e: ymd(r.e) }); });
+  if (SET.showWhoOff) h += whoOffHtml(r);
+  return h + '<div style="height:16px"></div>';
+}
+function lfHtml() {
+  const A = S.add, ed = A.mode === 'edit', a = pk(A.start), b = pk(A.end), bad = b < a, n = bad ? 0 : weekdaysIn(a, b).length, y = a.getFullYear();
+  let h = '<div class="pbar"><button data-a="acancel">' + (ed ? 'Cancel' : '‹ Leave') + '</button>' + (ed ? '<button class="pe" data-a="asave">Save</button>' : '') + '</div>';
+  h += '<div class="hd"><b>' + (ed ? 'Change leave' : 'Add leave') + '</b></div>';
+  h += '<div class="k">Type</div><div class="tbox"><div class="tb1 atype">' + segHtml('atype', [['H', 'Holiday'], ['S', 'Sick'], ['C', 'C']], A.type, false, true) + '</div>' + (A.type !== 'S' ? '<div class="tb2">' + segHtml('astat', [['R', 'Requested'], ['A', 'Approved']], A.st) + '</div>' : '') + '</div>';
+  if (A.type !== 'S') h += '<div class="k thint">Becomes Approved by itself when an imported rota shows it.</div>';
+  h += '<label class="k" for="aNote">Note</label><input class="fld anote" id="aNote" maxlength="120" autocomplete="off" placeholder="Optional, e.g. family visit" value="' + esc(A.note || '') + '">';
+  const [cy_, cm_] = A.cm, old = {};
+  if (ed && A.run) runDays(A.run).forEach((k) => { old[k] = 1; });
+  h += '<div class="lnav"><button data-a="acalnav" data-v="-1" aria-label="Previous month">‹</button><b>' + MF[cm_] + ' ' + cy_ + '</b><button data-a="acalnav" data-v="1" aria-label="Next month">›</button></div>';
+  h += lcal(cy_, cm_, { s: A.start, e: A.phase ? A.start : bad ? A.start : A.end, t: A.type, rq: A.st === 'R' && A.type !== 'S', pick: true, old });
+  h += '<div class="k ltip">' + (A.phase ? 'Now tap the last day' : 'Tap the first day, then the last day') + '</div>';
+  h += '<div class="k">Dates</div><div class="adates"><label class="dfl"><span>Start</span><input id="aStart" type="date" value="' + A.start + '"></label><label class="dfl"><span>End</span><input id="aEnd" type="date" value="' + A.end + '"></label></div>';
+  h += '<button class="btn asave" data-a="asave">' + (ed ? 'Save changes' : 'Add leave') + '</button>';
+  // Day count and what it does to the balance, under the button.
+  if (bad) h += '<div class="asum warn">The end date is before the start date.</div>';
+  else {
+    const prev = ed && A.run ? runDays(A.run) : [], pa = prev.filter((k) => !isReq(k)).length, pr = prev.length - pa;
+    h += '<div class="asum"><b>' + n + (n === 1 ? ' day' : ' days') + ' counted</b> (weekends not counted)<br>';
+    if (A.type === 'H') {
+      const AY = allowFor(y), hc = holCounts(y), oldH = A.run && A.run.t === 'H';
+      const used = hc.used + hc.booked - (oldH ? pa : 0), req = hc.req - (oldH ? pr : 0);
+      if (A.st === 'R') h += (AY && AY.allow != null ? 'Holiday left stays ' + (AY.allow + AY.carry - used) + ' · ' : '') + 'requested ' + req + ' → ' + (req + n);
+      else if (!AY || AY.allow == null) h += 'Holiday taken ' + used + ' → ' + (used + n) + '<br><span class="k">Set your allowance in Settings › Leave to see what is left.</span>';
+      else { const rem = AY.allow + AY.carry - used; h += 'Holiday left ' + rem + ' → ' + (rem - n); if (rem - n < 0) h += '<br><span class="warn">Over your allowance by ' + (n - rem) + (n - rem === 1 ? ' day' : ' days') + '. You can still save.</span>'; }
+    } else if (A.type === 'C') {
+      const l = cLeft(y) + (A.run && A.run.t === 'C' ? prev.length : 0);
+      h += 'C days left ' + l + ' → ' + (l - n); if (l - n < 0) h += '<br><span class="warn">Below zero by ' + (n - l) + (n - l === 1 ? ' day' : ' days') + '. You can still save.</span>';
+    } else { const s = countYear(y).S - (A.run && A.run.t === 'S' ? prev.length : 0); h += 'Sick days ' + s + ' → ' + (s + n); }
+    h += '</div>';
+  }
+  if (ed) h += '<button class="adel" data-a="adel">Delete this leave</button>';
+  return h + '<div style="height:16px"></div>';
+}
+// Picking Sick slides Requested / Approved up behind the Type box (Holiday or C slides it back down). Everything else
+// changes on the tap; a copy of the old status box is what slides away. Transform only.
+const afterTbox = (tb) => { const out = []; let n = tb.nextElementSibling; while (n) { out.push(n); n = n.nextElementSibling; } return out; };
+function statusSlide(show) {
+  if (motionOff('seg')) return null;
+  const root = document.querySelector('#push .pscr'), tb = root && root.querySelector('.tbox'); if (!tb) return null;
+  const ms = dms(300), o = { duration: ms, easing: EASE_SHEET }, hintH = (el) => (el ? el.offsetHeight + parseFloat(getComputedStyle(el).marginTop || 0) : 0);
+  if (!show) {
+    const tb1 = tb.querySelector('.tb1'), tb2 = tb.querySelector('.tb2'); if (!tb2) return null;
+    const top = tb1.offsetHeight, h = tb2.offsetHeight + hintH(root.querySelector('.thint')), gh = tb2.outerHTML;
+    return () => {
+      const nt = document.querySelector('#push .pscr .tbox'); if (!nt) return;
+      const g = document.createElement('div'); g.className = 'tbg'; g.style.top = top + 'px'; g.innerHTML = gh; nt.appendChild(g);
+      g.firstElementChild.animate([{ transform: 'none' }, { transform: 'translate3d(0,-100%,0)' }], { ...o, fill: 'forwards' }).finished.then(() => g.remove(), () => g.remove());
+      afterTbox(nt).forEach((n) => n.animate([{ transform: 'translate3d(0,' + h + 'px,0)' }, { transform: 'none' }], o));
+    };
+  }
+  return () => {
+    const nt = document.querySelector('#push .pscr .tbox'), tb2 = nt && nt.querySelector('.tb2'), hint = document.querySelector('#push .pscr .thint'); if (!tb2) return;
+    const h = tb2.offsetHeight + hintH(hint);
+    tb2.animate([{ transform: 'translate3d(0,-100%,0)' }, { transform: 'none' }], o);
+    if (hint) hint.animate([{ opacity: 0 }, { opacity: 1 }], o);
+    afterTbox(nt).filter((n) => n !== hint).forEach((n) => n.animate([{ transform: 'translate3d(0,' + -h + 'px,0)' }, { transform: 'none' }], o));
+  };
+}
+SEGACT.atype = (v) => { const A = S.add; if (!A) return; const was = A.type; A.type = v; if ((was === 'S') !== (v === 'S')) S.afterSeg = statusSlide(v !== 'S'); };
+SEGACT.astat = (v) => { if (S.add) S.add.st = v; };
+SEGACT.reqlook = (v) => { SET.reqLook = v; save(); };
+// Write leave over a range: remembers what each day was (UNDER), records requested and the note (LM).
+function writeLeave(A) {
+  const s = pk(A.start), e = pk(A.end), keep = {};
+  if (A.run) runDays(A.run).forEach((k) => { keep[k] = UNDER[k]; freeLeaveDay(k); clearNote(ME_KEY, k); delete LM[k]; });
+  const note = (A.note || '').trim().slice(0, 120), req = A.st === 'R' && A.type !== 'S';
+  weekdaysIn(s, e).forEach((d) => {
+    const k = ymd(d);
+    if (!LEAVE[D[k]] && !(k in UNDER)) UNDER[k] = k in keep && keep[k] !== undefined ? keep[k] : D[k] || '';
+    D[k] = A.type; clearNote(ME_KEY, k);
+    const m = {}; if (req) m.r = 1; if (note) m.n = note; if (m.r || m.n) LM[k] = m; else delete LM[k];
+  });
+}
+// Snapshot of the days a booking covers, so Delete can be undone.
+function snapRun(r) { const out = []; for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d), n = NOTES[ME_KEY] && NOTES[ME_KEY][k]; out.push([k, D[k], UNDER[k], LM[k] ? { ...LM[k] } : undefined, n ? { ...n } : undefined]); } return out; }
+function restoreSnap(sn) {
+  sn.forEach(([k, c, u, m, n]) => {
+    if (c === undefined) delete D[k]; else D[k] = c;
+    if (u === undefined) delete UNDER[k]; else UNDER[k] = u;
+    if (m === undefined) delete LM[k]; else LM[k] = m;
+    if (n === undefined) clearNote(ME_KEY, k); else (NOTES[ME_KEY] || (NOTES[ME_KEY] = {}))[k] = n;
+  });
+}
+function findRun(k, t) { const y = +k.slice(0, 4); return leaveRuns(y).find((r) => r.t === t && ymd(r.s) <= k && ymd(r.e) >= k) || null; }
 
 // ---------- events ----------
 document.addEventListener('click', (e) => {
@@ -1480,7 +1623,7 @@ document.addEventListener('click', (e) => {
   if (a === 'seg') { if (!el.disabled) segTap(el); return; }
   if (a === 'atg') { switchTap(el); return; }
   if (a === 'xtog') { xToggle(el); return; }
-  if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.cf = null; S.tab = v; S.imp = null; S.add = null; S.lyear = null; S.ymenu = false; S.showPast = false; }
+  if (a === 'tab') { closeNow(); pushInstant(); S.rm = null; S.cf = null; S.tab = v; S.imp = null; S.add = null; S.ymenu = false; S.showPast = false; }   // the Leave year stays, so Settings › Leave follows it
   else if (a === 'yr') S.ymenu = !S.ymenu;
   else if (a === 'pickyear') { S.lyear = +v === curYear() ? null : +v; S.ymenu = false; S.showPast = false; }
   else if (a === 'showme') { SET.showing = null; save(); }
@@ -1489,7 +1632,17 @@ document.addEventListener('click', (e) => {
   else if (a === 'rmask') S.rm = v;
   else if (a === 'rmno') S.rm = null;
   else if (a === 'cfno') S.cf = null;
+  else if (a === 'cfyes' && S.cf.kind === 'ldel') {
+    // Delete a booking: days go back to what they were; Undo on the toast puts it all back.
+    const r = S.add && S.add.run; S.cf = null; if (!r) { render(); return; }
+    const sn = snapRun(r);
+    runDays(r).forEach((k) => { freeLeaveDay(k); clearNote(ME_KEY, k); delete LM[k]; });
+    save(); S.add = null; renderFade(null, 'push'); popScreen();
+    toast('Leave deleted', () => { restoreSnap(sn); save(); renderFade(null, 'push'); toast('Leave restored'); });
+    return;
+  }
   else if (a === 'cfyes') { const k2 = S.cf.k; S.cf = null; closeSheet(); undoChange(k2); return; }
+  else if (a === 'tundo') { const f = S.tundo; S.tundo = null; if (f) f(); return; }
   else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); renderFade(null, 'pop'); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
   else if (a === 'gosettings') S.tab = 'settings';
@@ -1499,16 +1652,25 @@ document.addEventListener('click', (e) => {
   else if (a === 'day') { if (viewingOther()) return; openSheet(editorPage(k), { panel: true, expandable: TEAM.groups.length > 0, toTitle: true }); return; }
   else if (a === 'past') S.showPast = !S.showPast;
   else if (a === 'add') { S.add = addDefaults(); pushScreen(); return; }
-  else if (a === 'acancel') { popScreen(); S.add = null; }
+  else if (a === 'acancel') { if (S.add && S.add.mode === 'edit' && S.add.run) { S.add = viewOf(S.add.run); renderFade(null, 'push'); return; } popScreen(); S.add = null; }
   else if (a === 'asave') {
-    const A = S.add, s = pk(A.start), en = pk(A.end);
-    if (en < s) { render(); return; }
-    // Leave gets no note, and clears any note on the days it writes.
-    if (A.edit) for (let d = A.edit.s; d <= A.edit.e; d = addDays(d, 1)) if (D[ymd(d)] === A.edit.t) { D[ymd(d)] = 'O'; clearNote(ME_KEY, ymd(d)); }
-    weekdaysIn(s, en).forEach((d) => { D[ymd(d)] = A.type; clearNote(ME_KEY, ymd(d)); });
-    save(); S.add = null; renderFade(null, 'push'); popScreen(); return;
+    const A = S.add, s0 = pk(A.start), e0 = pk(A.end), wd = weekdaysIn(s0, e0);
+    if (e0 < s0 || !wd.length) { render(); return; }
+    writeLeave(A); save();
+    if (A.mode === 'edit') { const r = findRun(ymd(wd[0]), A.type); S.add = r ? viewOf(r) : null; if (!S.add) { renderFade(null, 'push'); popScreen(); return; } renderFade(null, 'push'); return; }
+    S.add = null; renderFade(null, 'push'); popScreen(); return;
   }
-  else if (a === 'run') { openSheet(runPage(leaveRuns(leaveYear())[+v]), { panel: true, expandable: false }); return; }
+  else if (a === 'aedit') { if (S.add) { S.add.mode = 'edit'; S.add.cm = [pk(S.add.start).getFullYear(), pk(S.add.start).getMonth()]; } renderFade(null, 'push'); return; }
+  else if (a === 'adel') { S.cf = { title: 'Delete this leave?', text: 'The days go back to what they were before. You can undo straight after.', yes: 'Delete', kind: 'ldel' }; }
+  else if (a === 'acal') {
+    const A = S.add; if (!A) return;
+    if (A.phase === 1 && k >= A.start) { A.end = k; A.phase = 0; } else { A.start = k; A.end = k; A.phase = 1; }
+    render(); return;
+  }
+  else if (a === 'acalnav') { const A = S.add; if (!A) return; let [yy, mm] = A.cm; mm += +v; if (mm < 0) { mm = 11; yy--; } if (mm > 11) { mm = 0; yy++; } A.cm = [yy, mm]; renderFade(null, 'push'); return; }
+  else if (a === 'lwho') { if (S.add) S.add.wopen = !S.add.wopen; toggleSection(el, document.querySelector('#push .pscr')); return; }
+  else if (a === 'useworked') { const y = leaveYear(), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = null; Y.hand = false; save(); renderFade(null, 'seg'); return; }
+  else if (a === 'run') { const r = leaveRuns(leaveYear())[+v]; if (!r) return; S.add = viewOf(r); pushScreen(); return; }
   else if (a === 'impstart') { document.getElementById('rotaFile').click(); return; }
   else if (a === 'bkimport') { document.getElementById('backupFile').click(); return; }
   else if (a === 'export') { exportBackup(); return; }
@@ -1532,15 +1694,15 @@ document.addEventListener('change', (e) => {
   if (t.dataset && t.dataset.wo != null) { whoTickOffice(t.dataset.wo, t.checked); save(); render(); return; }
   if (t.dataset && t.dataset.wp != null) { whoTickPerson(t.dataset.wp, t.dataset.wg, t.checked); save(); render(); return; }
   if (t.dataset && t.dataset.g != null) { const g = t.dataset.g; SET.swapGroups = t.checked ? [...new Set([...SET.swapGroups, g])] : SET.swapGroups.filter((x) => x !== g); save(); render(); return; }
-  if (t.id === 'aStart' && S.add) { S.add.start = t.value || S.add.start; if (pk(S.add.end) < pk(S.add.start)) S.add.end = S.add.start; render(); }
-  else if (t.id === 'aEnd' && S.add) { S.add.end = t.value || S.add.end; render(); }
+  if (t.id === 'aStart' && S.add) { S.add.start = t.value || S.add.start; if (pk(S.add.end) < pk(S.add.start)) S.add.end = S.add.start; S.add.phase = 0; S.add.cm = [pk(S.add.start).getFullYear(), pk(S.add.start).getMonth()]; render(); }
+  else if (t.id === 'aEnd' && S.add) { S.add.end = t.value || S.add.end; S.add.phase = 0; render(); }
   else if (t.id === 'setName') { SET.name = t.value.trim() || SET.name; save(); render(); }
-  else if (t.id === 'setAllow') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null, carry: cur.carry }; save(); render(); }
-  else if (t.id === 'setCarry') { const y = curYear(), n = parseInt(t.value, 10), cur = allowFor(y) || { allow: null, carry: 0 }; SET.years[y] = { allow: cur.allow, carry: Number.isFinite(n) ? Math.min(2, Math.max(0, n)) : 0 }; save(); render(); }
+  else if (t.id === 'setAllow') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: null, carry: null, hand: false }); Y.allow = Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null; if (Y.carry === undefined) Y.carry = null; save(); renderFade('#setAllow', 'seg'); }
+  else if (t.id === 'setCarry') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = Number.isFinite(n) ? Math.max(0, Math.min(99, n)) : 0; Y.hand = true; save(); renderFade('#setCarry', 'seg'); }
   else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
 // Swipe length slider: show the value while dragging, save when let go.
-document.addEventListener('input', (e) => { if (e.target.id === 'aswipe') { const v = e.target.value + ' ms'; ['aswv', 'aswl'].forEach((id) => { const x = document.getElementById(id); if (x) x.textContent = v; }); } });
+document.addEventListener('input', (e) => { if (e.target.id === 'aNote' && S.add) S.add.note = e.target.value; if (e.target.id === 'aswipe') { const v = e.target.value + ' ms'; ['aswv', 'aswl'].forEach((id) => { const x = document.getElementById(id); if (x) x.textContent = v; }); } });
 document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET.anim.swipe = cleanAnim({ swipe: e.target.value }).swipe; save(); } });
 // No zooming: iPhone pinch gestures are blocked (double-tap zoom is off via CSS touch-action).
 ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));

@@ -2,6 +2,17 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.9.3 — 14 Nov 2026
+- Leave tab reworked:
+  - Counts as tiles: a big Holiday tile (left of your allowance, used, requested) that you tap to add leave; smaller tiles for holiday booked, C days left (tap for the bank holidays list) and sick days. An "Other leave" line appears only when your rota has Other days. The Add leave button is gone.
+  - Booked leave as slim coloured cards. Tapping one opens a view of the booking: dates, type, days counted, note, the month(s) with all your shifts, and (optional) who else is off. "Edit" in the top right changes it; Delete is only in edit mode, asks first, and has Undo on the toast.
+  - Year menu: last year (read-only), this year and next year. Next year can be fully edited; its carried-over days are worked out from what's left this year (approved holiday only) unless you type your own.
+- Add / Change leave: Requested or Approved under the type (not for Sick; slides away behind it), a note, a calendar of your shifts where you tap the first and last day, date boxes under it, and the day count under the Add leave button.
+- Requested leave is shown striped, faded or outlined (your choice) on the Leave tab, Month and Week, and becomes approved by itself when an imported rota shows it.
+- Importing a rota: your leave that the rota shows is kept (with its note); leave it doesn't show is removed, and a pop-up lists it.
+- Settings › Leave: allowance and carried over side by side with the total, for the year shown on the Leave tab; no carry-over limit; switches for C days, Sick days and Other leave, "Show who else is off", and the requested-leave look.
+- Undo of an edit or swap now puts a day back exactly as it was, including blank days. Deleting or shortening leave restores what was there before.
+
 ## 0.9.2 — 13 Nov 2026
 - Who's on: shift cards always appear in shift order (M, L, E). Your own shift's card still starts open, wherever it sits.
 
