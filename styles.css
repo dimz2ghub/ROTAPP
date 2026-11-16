@@ -67,15 +67,7 @@ h1,h2{margin:0}
 .acts button{flex:1;text-align:center;padding:11px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-weight:600;font-size:14px}
 .acts .p{background:var(--accentbg);color:var(--accent);border-color:var(--accent)}
 .fld{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin:3px 0 8px;background:var(--surface);color:var(--text);font:inherit;font-size:16px}
-.chips{display:flex;gap:6px;margin:4px 0 8px}
-.chp{border:0;padding:6px 14px;border-radius:6px;font-weight:600;font-size:13px;opacity:.45}
-.chp.on{opacity:1;outline:2px solid var(--accent);outline-offset:1px}
-.smry{background:var(--surface2);border-radius:8px;padding:10px;font-size:13px;line-height:1.5;margin-top:10px}
 .warn{color:var(--danger)}
-.mc{height:30px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text2)}
-.strow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--border);font-size:14px}
-.strow .fld{width:90px;margin:0;text-align:right}
-.strow .fld.wide{width:190px;text-align:left}
 .modal{position:absolute;left:12px;right:12px;top:50%;transform:translateY(-50%);z-index:6;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;max-height:92%;overflow:auto;max-width:520px;margin:0 auto}
 .modal h3{font-size:16px;font-weight:600;margin:0 0 6px}
 .wbar{background:rgba(255,200,0,.18);border:1px solid rgba(255,200,0,.55);border-radius:8px;padding:8px 10px;font-size:13px;margin:8px 0}
@@ -110,8 +102,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 }
 
 /* ---------- 0.5: team view ---------- */
-.vpill{display:flex;justify-content:center;margin:-4px 0 10px}
-.vpill span{font-size:12px;background:var(--surface2);color:var(--text2);border-radius:12px;padding:3px 10px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 2px}
 .sel{border:1px solid var(--border);border-radius:8px;padding:7px 9px;background:var(--surface);color:var(--text);font:inherit;font-size:14px;max-width:210px;min-width:0}
 
@@ -139,7 +129,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 /* ---------- 0.5: Settings as grouped cards ---------- */
 #main.grouped{background:var(--bg)}
 .stitle{font-size:28px;font-weight:700;margin:4px 4px 14px}
-.herocard{background:#185FA5;color:#fff;border-radius:14px;margin-bottom:14px;overflow:hidden}
 .herorow{display:flex;align-items:stretch}
 .hmain{flex:1;display:flex;align-items:center;gap:12px;border:0;background:none;color:#fff;padding:14px 8px 14px 16px;text-align:left;min-width:0}
 .hmain b{display:block;font-size:16px}
@@ -151,7 +140,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .hk{font-size:12px;opacity:.85}
 .hbtns{display:flex;gap:8px;margin-top:8px}
 .hbtns button{flex:1;padding:10px;border-radius:10px;border:0;background:rgba(255,255,255,.18);color:#fff;font-weight:600;font-size:14px}
-.scard{background:var(--surface);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .ch{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;padding:13px 14px;text-align:left}
 .sic{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;color:#fff}
 .sic svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -160,7 +148,6 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .ch .t small{display:block;font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chev{display:inline-block;color:var(--muted);font-size:14px;transition:transform .3s ease}
 .hchev .chev{color:#fff}
-.scard.open .chev,.herocard.open .chev{transform:rotate(180deg)}
 .inner{margin:0 14px;border-top:1px solid var(--border)}
 .it{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border);font-size:14px}
 .it:last-child{border-bottom:0}
@@ -192,7 +179,6 @@ body{background:var(--bg)}
 .seg{background:var(--tile);border:1px solid var(--border);border-radius:9px;padding:2px;gap:2px}
 .seg button{background:none;color:var(--muted);border-radius:7px;padding:6px 12px}
 .seg button.on{background:var(--segon);color:var(--text);box-shadow:var(--segsh)}
-.vpill span{background:var(--tile);color:var(--text2)}
 .dim{background:var(--dimbg)}
 .sheet{background:var(--sheet);border-top:1px solid var(--border);border-radius:18px 18px 0 0;box-shadow:var(--sheetsh)}
 .grab{background:var(--grab)}
@@ -202,7 +188,6 @@ body{background:var(--bg)}
 .acts .p,.btn{background:var(--pbg);color:var(--pfg);border-color:var(--pbg)}
 .lnk{color:var(--text2)}
 .mrow{color:var(--muted)}
-.chp.on{outline:0;box-shadow:inset 0 0 0 2px var(--ring)}
 .c.sel{outline:0;box-shadow:inset 0 0 0 2.5px var(--ring)}
 .c.mine{outline:2px dashed var(--dash);outline-offset:-2px}
 .c.sel.mine{outline:0}
@@ -215,8 +200,6 @@ input[type=checkbox]{accent-color:var(--act)}
 .bar{background:var(--tile)}
 .bar i{background:#FFD43B}
 #main.grouped{background:var(--bg)}
-.scard{background:var(--tile);border:1px solid var(--border)}
-.herocard{background:#2F5FD0}
 @media (min-width:900px){
   #nav{border-top:0;border-right:1px solid var(--border);background:var(--side)}
   .tab.on{background:var(--sideon)}
@@ -228,12 +211,8 @@ input[type=checkbox]{accent-color:var(--act)}
 .yr{border:0;background:none;font-size:17px;font-weight:600;color:var(--text);padding:4px 2px}
 .ymenu{position:absolute;right:0;top:34px;z-index:5;background:var(--menu);border:1px solid var(--border);border-radius:12px;box-shadow:var(--menush);min-width:96px;overflow:hidden}
 .ymenu button{display:block;width:100%;border:0;background:none;text-align:left;padding:11px 16px;font-size:15px;color:var(--text)}
-.kr{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .note{font-size:12px;color:var(--muted)}
 .rw.ro{cursor:default}
-.lticks{display:flex;gap:18px;margin-top:8px;font-size:14px}
-.lticks label{display:flex;align-items:center;gap:7px}
-.lticks input{width:18px;height:18px}
 .it .fld.num{width:80px;margin:0;text-align:right}
 
 /* ---------- 0.7 ---------- */
@@ -242,15 +221,11 @@ input[type=checkbox]{accent-color:var(--act)}
 #main.grouped #scr{min-height:100%;display:flex;flex-direction:column}
 .setwrap{flex:1;display:flex;flex-direction:column}
 .setwrap .foot{margin-top:auto;padding-top:24px}
-.cblock{border-top:1px solid var(--border);margin-top:14px;padding-top:14px}
-.cblock .big{font-size:24px}
 .adj{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-top:1px solid var(--border);margin-top:4px;font-size:14px}
 .stepper{display:inline-flex;align-items:center;gap:12px}
 .stepper button{width:34px;height:34px;border-radius:9px;border:1px solid var(--border);background:var(--tile);font-size:18px;line-height:1;color:var(--text)}
 .stepper button:disabled{opacity:.35}
 .stepper b{min-width:22px;text-align:center}
-.psec{margin:18px 4px 0}
-.pt{font-size:13px;font-weight:600;margin-bottom:2px}
 .prw{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--border);padding:8px 2px;font-size:14px}
 .prw .old{font-size:11px;color:var(--muted);margin-left:6px}
 .rmb{border:1px solid var(--border);background:var(--tile);color:var(--danger);border-radius:8px;padding:5px 10px;font-size:13px;font-weight:600;flex:none}
@@ -269,11 +244,6 @@ input[type=checkbox]{accent-color:var(--act)}
 .igrp input,.ipr input{width:18px;height:18px;flex:none}
 .plist .grp:first-child{margin-top:8px}
 .plist{padding-bottom:6px}
-.pp{padding-bottom:4px}
-.pph{width:100%;display:flex;justify-content:space-between;align-items:center;border:0;background:none;padding:0;text-align:left;color:var(--text);font-size:14px}
-.pph small{display:block;font-size:12px}
-.scard.open .pp .chev{transform:none}
-.scard.open .pp.open .chev{transform:rotate(180deg)}
 /* 0.7.6: person chip and picker */
 .pchip{display:flex;justify-content:center;margin:-4px 0 10px}
 .pc{display:inline-flex;align-items:center;gap:5px;max-width:100%;border:1px solid var(--border);background:var(--tile);border-radius:13px;padding:2px 4px 2px 10px;font-size:12px;color:var(--text2)}
@@ -308,15 +278,12 @@ input[type=checkbox]{accent-color:var(--act)}
 .wpl label{display:flex;align-items:center;gap:8px;font-size:14px;padding:6px 0;border-top:1px solid var(--border)}
 .wpl label.off span{color:var(--muted)}
 .who{margin-top:18px;padding-bottom:12px}
-.wtitle{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px}
 .you{font-size:11px;color:var(--text2);border:1px solid var(--border);border-radius:8px;padding:0 6px}
 .stag{display:inline-block;min-width:26px;text-align:center;border-radius:6px;padding:1px 5px;font-size:11px;font-weight:700}
 .wsgb{padding:0 12px 6px}
 .wog2{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:8px 0 2px}
 .wpr{display:flex;align-items:center;gap:8px;border-top:1px solid var(--border);padding:8px 0;font-size:14px}
 .wpr .stag{margin-left:auto}
-@media (min-width: 900px){
-}
 
 /* ---------- 0.8: motion (transform and opacity only) ---------- */
 :root{--offmark:#000;--offsolid:#3d3e43}
@@ -512,7 +479,6 @@ html,body{overflow:hidden;overscroll-behavior:none}
 .lvm{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chip{display:inline-block;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700}
 .rqchip{background:var(--tile);color:var(--text);border:1px solid var(--border)}
-.lnote{display:flex;align-items:baseline;gap:8px;background:var(--tile);border-radius:9px;padding:6px 10px;margin-top:10px;font-size:13px;overflow-wrap:anywhere}
 .lmt{font-size:13px;font-weight:700;margin:14px 0 6px}
 .lcg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}
 .lcg .w{font-size:10px;color:var(--faint,var(--muted));text-align:center;font-weight:600}

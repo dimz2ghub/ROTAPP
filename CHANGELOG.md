@@ -2,6 +2,15 @@
 
 Newest first. One entry per version; older files are not kept, so this is the record of what changed.
 
+## 0.9.5 — 16 Nov 2026
+- Code tidy-up only: nothing looks or works differently.
+  - Removed code left behind by earlier versions: the old booked-leave sheet (replaced by the booking view in 0.9.3), an unused helper, two unused tap/tick handlers and an unused import.
+  - Removed 33 style rules for parts of the screen that no longer exist (old settings cards, tick boxes, chips and note styles).
+  - Small efficiency gains on the Leave screens: today's date and each booking's note are worked out once instead of once per day or twice per card.
+  - Comments and section order tidied (animation settings now sit in their own section; duplicate comments removed).
+- Fixed a hidden error: moving to Leave or Settings while a week or month was still sliding logged an error behind the scenes (nothing visible went wrong).
+- Checked by running the same 2,000 or so taps through 0.9.4 and 0.9.5 side by side on phone and desktop sizes, light and dark, and comparing every screen, style and saved value.
+
 ## 0.9.4 — 14 Nov 2026
 - A booking's note is now its title: booking cards show the note instead of the leave type, and the booking view shows the note as its heading with the dates underneath.
 - Carried-over days are no longer worked out for next year: you type them in (0 until you do), the same as this year.

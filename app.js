@@ -1,7 +1,7 @@
-import { readRotaPdf, MONTHS } from './reader.js';
+import { readRotaPdf } from './reader.js';
 import { readRotaXlsx } from './xlsx.js';
 
-const VERSION = '0.9.4 prototype';
+const VERSION = '0.9.5 prototype';
 const KEY = 'rotapp.v1';
 
 // UI v2.0 (Dark-first) shift colours
@@ -164,13 +164,6 @@ const bhWorked = (y) => bankHolidays(y).filter((b) => WORKED[D[b.k]]).map((b) =>
 const cAdjFor = (y) => (SET.cAdj && SET.cAdj[y]) || 0;
 const cEarned = (y) => bhWorked(y).length + cAdjFor(y);
 const cLeft = (y) => cEarned(y) - countYear(y).C;
-// The first month of the year that has any of your days, if it isn't January.
-function countingFrom(y) {
-  const ms = Object.keys(D).filter((k) => k.startsWith(y + '-')).map((k) => +k.slice(5, 7) - 1);
-  if (!ms.length) return null;
-  const first = Math.min(...ms);
-  return first > 0 ? first : null;
-}
 function countYear(y) {
   const c = { H: 0, C: 0, S: 0, X: 0 };
   for (const [k, v] of Object.entries(D)) if (k.startsWith(y + '-') && c[v] !== undefined) c[v]++;
@@ -272,7 +265,6 @@ const SICON = {
   people: ['#5C6B80', '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>'],
   leave: ['#E8A317', '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>'],
 };
-// Person picker sheet: Back to me, then everyone grouped by office, filtered by the search box.
 // Person picker: Back to me, then everyone grouped by office, filtered by the search box.
 function pickerPage() {
   const pg = makePage({ top: '<div class="pph2"><b>Show rota for</b><button data-a="close">Done</button></div><label class="srch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><input id="ppq" type="search" placeholder="Search names" autocomplete="off" autocorrect="off" spellcheck="false"></label>', scroll: ppListHtml(''), label: 'Show rota for' });
@@ -744,7 +736,6 @@ function editorPage(k) {
   };
   return pg;
 }
-// Everyone working that day, grouped by shift (yours first and open) then by office.
 // Everyone working that day, one section per group (M with MA, L with LA, then E): your group first and open, then by office.
 const WHO_ORDER = ['M', 'L', 'E'];
 function whoOnHtml(k) {
@@ -756,10 +747,10 @@ function whoOnHtml(k) {
     const g = shiftGroup(c);
     (by[g] = by[g] || []).push([n, p.g, c]);
   }
-  const order = WHO_ORDER;   // shift cards always in shift order; your own shift's card is the one that starts open
   let h = '<div class="woh">Who\'s on · ' + longDate(k) + '</div>', any = false;
   const rank = (n, g) => { const gi = offices.indexOf(g), grp = TEAM.groups[gi]; return [gi < 0 ? 99 : gi, grp ? grp[1].indexOf(n) : 0]; };
-  order.forEach((sg) => {
+  // Shift cards always in shift order; your own shift's card is the one that starts open.
+  WHO_ORDER.forEach((sg) => {
     const ps = by[sg]; if (!ps) return; any = true;
     ps.sort((a, b) => { const x = rank(a[0], a[1]), y = rank(b[0], b[1]); return x[0] - y[0] || x[1] - y[1]; });
     const open = sg === mg;
@@ -871,19 +862,6 @@ function bhPage() {
   pg.on = {
     close: closeSheet,
     cadj: (el) => { if (ro) return; SET.cAdj[y] = Math.max(-9, Math.min(9, cAdjFor(y) + +el.dataset.v)); save(); pg.setTop(topH()); pg.inner.innerHTML = body(); render(); },
-  };
-  return pg;
-}
-function runPage(r) {
-  const pg = makePage({ top: '<div class="eh">' + lab(r.s, r.e) + ' <small>· ' + T[r.t].n + ', ' + r.n + (r.n === 1 ? ' day' : ' days') + '</small></div><div class="acts"><button data-a="runedit">Change dates</button><button data-a="rundel" style="color:var(--danger)">Delete</button></div>', bar: [['Close', 'close']], label: 'Booked leave' });
-  pg.on = {
-    close: closeSheet,
-    // Change dates closes this sheet and pushes Change leave at the same time.
-    runedit: () => { closeSheet(); S.add = { type: r.t === 'S' || r.t === 'C' ? r.t : 'H', start: ymd(r.s), end: ymd(r.e), edit: r }; pushScreen(); },
-    rundel: () => {
-      for (let d = r.s; d <= r.e; d = addDays(d, 1)) { const k = ymd(d); if (D[k] === r.t) { freeLeaveDay(k); clearNote(ME_KEY, k); } }
-      save(); renderFade(null, 'sheet'); closeSheet(); toast('Leave deleted');
-    },
   };
   return pg;
 }
@@ -1270,9 +1248,12 @@ const SEGACT = {
   wmode: (v) => { SET.wmode = v; S.woff = 0; save(); },
   style: (v) => { SET.style = v; save(); },
   themeset: (v) => { SET.theme = v; save(); },
-  atype: (v) => { if (S.add) S.add.type = v; },
   aspeed: (v) => { SET.anim.speed = v; save(); },
   aease: (v) => { SET.anim.ease = v; save(); },
+  // Add leave: switching to or from Sick slides Requested / Approved away or back (statusSlide).
+  atype: (v) => { const A = S.add; if (!A) return; const was = A.type; A.type = v; if ((was === 'S') !== (v === 'S')) S.afterSeg = statusSlide(v !== 'S'); },
+  astat: (v) => { if (S.add) S.add.st = v; },
+  reqlook: (v) => { SET.reqLook = v; save(); },
 };
 // Switches slide like iOS. The screen changes on tap (with a quick fade) while the knob slides in the redrawn switch.
 function switchTap(el) {
@@ -1381,7 +1362,6 @@ function modalClose() {
 }
 const markMixed = (root) => root.querySelectorAll('[data-mixed]').forEach((x) => { x.indeterminate = true; });
 
-
 // ---------- office days ----------
 // OFFICE[ymd] = 1 marks a weekday M as an office day. Every M starts as a home day; office is only ever set by hand in the day editor.
 let OFFICE = {};
@@ -1465,8 +1445,8 @@ function leaveHtml() {
     const p = isPast(r);
     if (p) past++; else up++;
     if (p && !S.showPast) return;
-    const rq = runReq(r), t = T[r.t];
-    h += '<button class="lcard' + (rq ? ' rq' : '') + (p ? ' past' : '') + '" data-a="run" data-v="' + i + '" style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"><b>' + shortRange(r.s, r.e) + '</b><span class="lct">' + (runNote(r) ? esc(runNote(r)) : t.n) + '</span>' + (rq ? '<span class="rqt">Requested</span>' : '') + '<span class="r">' + r.n + (r.n === 1 ? ' day' : ' days') + '</span></button>';
+    const rq = runReq(r), t = T[r.t], note = runNote(r);
+    h += '<button class="lcard' + (rq ? ' rq' : '') + (p ? ' past' : '') + '" data-a="run" data-v="' + i + '" style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"><b>' + shortRange(r.s, r.e) + '</b><span class="lct">' + (note ? esc(note) : t.n) + '</span>' + (rq ? '<span class="rqt">Requested</span>' : '') + '<span class="r">' + r.n + (r.n === 1 ? ' day' : ' days') + '</span></button>';
   });
   if (!up) h += '<div class="k" style="padding:8px 0">No upcoming leave</div>';
   if (past) h += '<button class="lnk" data-a="past">' + (S.showPast ? 'Hide past leave' : 'Show past leave (' + past + ')') + '</button>';
@@ -1484,7 +1464,7 @@ function viewOf(r) { return { mode: 'view', type: r.t === 'S' || r.t === 'C' ? r
 const lsHtml = () => (S.add.mode === 'view' ? lvHtml() : lfHtml());
 // Month grid for the leave screens: your shifts, with the chosen range in the leave type's colour.
 function lcal(y, m, o) {
-  const off = (new Date(y, m, 1).getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate(), old = o.old || {};
+  const off = (new Date(y, m, 1).getDay() + 6) % 7, dim = new Date(y, m + 1, 0).getDate(), old = o.old || {}, tk = ymd(today());
   let h = '<div class="lcg">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => '<div class="w">' + x + '</div>').join('') + '<div></div>'.repeat(off);
   for (let n = 1; n <= dim; n++) {
     const d = new Date(y, m, n), k = ymd(d), wd = d.getDay() > 0 && d.getDay() < 6, inr = !!o.s && k >= o.s && k <= o.e;
@@ -1492,7 +1472,7 @@ function lcal(y, m, o) {
     if (o.t && old[k] && !(inr && wd)) { const u = UNDER[k]; c = u === undefined ? 'O' : u || undefined; }
     if (o.t && inr && wd) { c = o.t; rq = o.rq; }
     const t = c ? T[c] : null, tag = o.pick ? 'button' : 'div';
-    const cls = 'lc' + (inr ? ' in' : '') + (inr && !wd ? ' we' : '') + (rq ? ' rq' : '') + (t ? '' : ' nr') + (k === ymd(today()) ? ' tod' : '');
+    const cls = 'lc' + (inr ? ' in' : '') + (inr && !wd ? ' we' : '') + (rq ? ' rq' : '') + (t ? '' : ' nr') + (k === tk ? ' tod' : '');
     h += '<' + tag + (o.pick ? ' data-a="acal" data-k="' + k + '"' : '') + ' class="' + cls + '"' + (t ? ' style="background-color:' + t.bg + ';color:' + t.fg + ';--rqc:' + t.bg + '"' : '') + '><span>' + n + '</span><b>' + (t ? (c === 'O' ? '' : t.sm) : '–') + '</b></' + tag + '>';
   }
   return h + '</div>';
@@ -1579,9 +1559,6 @@ function statusSlide(show) {
     afterTbox(nt).filter((n) => n !== hint).forEach((n) => n.animate([{ transform: 'translate3d(0,' + -h + 'px,0)' }, { transform: 'none' }], o));
   };
 }
-SEGACT.atype = (v) => { const A = S.add; if (!A) return; const was = A.type; A.type = v; if ((was === 'S') !== (v === 'S')) S.afterSeg = statusSlide(v !== 'S'); };
-SEGACT.astat = (v) => { if (S.add) S.add.st = v; };
-SEGACT.reqlook = (v) => { SET.reqLook = v; save(); };
 // Write leave over a range: remembers what each day was (UNDER), records requested and the note (LM).
 function writeLeave(A) {
   const s = pk(A.start), e = pk(A.end), keep = {};
@@ -1640,7 +1617,6 @@ document.addEventListener('click', (e) => {
   else if (a === 'tundo') { const f = S.tundo; S.tundo = null; if (f) f(); return; }
   else if (a === 'rmyes') { const n = S.rm; S.rm = null; removePerson(n); renderFade(null, 'pop'); toast(n + ' removed'); return; }
   else if (a === 'imppeople') S.imp.pOpen = !S.imp.pOpen;
-  else if (a === 'gosettings') S.tab = 'settings';
   else if (a === 'prev') { interrupt(); animateTo(-1); return; }
   else if (a === 'next') { interrupt(); animateTo(1); return; }
   else if (a === 'today') { interrupt(); const o = PAGED[S.tab].off(); if (o) animateTo(o > 0 ? -1 : 1, 0); return; }
@@ -1693,9 +1669,8 @@ document.addEventListener('change', (e) => {
   else if (t.id === 'setName') { SET.name = t.value.trim() || SET.name; save(); render(); }
   else if (t.id === 'setAllow') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: null, carry: 0 }); Y.allow = Number.isFinite(n) && n >= 0 ? Math.min(99, n) : null; if (Y.carry == null) Y.carry = 0; save(); renderFade('#setAllow', 'seg'); }
   else if (t.id === 'setCarry') { const y = leaveYear(), n = parseInt(t.value, 10), Y = SET.years[y] || (SET.years[y] = { allow: (allowFor(y) || {}).allow ?? null }); Y.carry = Number.isFinite(n) ? Math.max(0, Math.min(99, n)) : 0; save(); renderFade('#setCarry', 'seg'); }
-  else if (t.dataset && t.dataset.lt) { SET[t.dataset.lt] = t.checked; save(); render(); }
 });
-// Swipe length slider: show the value while dragging, save when let go.
+// Add leave note: kept as you type. Swipe length slider: show the value while dragging, save when let go.
 document.addEventListener('input', (e) => { if (e.target.id === 'aNote' && S.add) S.add.note = e.target.value; if (e.target.id === 'aswipe') { const v = e.target.value + ' ms'; ['aswv', 'aswl'].forEach((id) => { const x = document.getElementById(id); if (x) x.textContent = v; }); } });
 document.addEventListener('change', (e) => { if (e.target.id === 'aswipe') { SET.anim.swipe = cleanAnim({ swipe: e.target.value }).swipe; save(); } });
 // No zooming: iPhone pinch gestures are blocked (double-tap zoom is off via CSS touch-action).
@@ -1723,12 +1698,6 @@ document.getElementById('backupFile').addEventListener('change', async (e) => {
 });
 window.matchMedia('(min-width: 900px)').addEventListener('change', render);
 
-
-// ---------- swiping between weeks and months ----------
-// Only transforms are animated, so it runs on the graphics chip and costs almost nothing.
-const GAP = 16, REEL_H = 26;
-const snapMs = () => SET.anim.swipe, snapEase = () => ANIM_EASE[SET.anim.ease][1];
-let TR = null, job = null, drag = null, swallowClick = false;
 // ---------- animation settings (Settings → Appearance → Animations) ----------
 const ANIM_AREAS = [['swipe', 'Swipes'], ['sheet', 'Sheets'], ['pop', 'Pop-ups'], ['push', 'Add leave slide'], ['cards', 'Settings cards'], ['toast', 'Toasts'], ['seg', 'Toggle highlight']];
 const ANIM_SPEED = { relaxed: ['Relaxed', 1.3], normal: ['Normal', 1], quick: ['Quick', 0.6] };
@@ -1744,6 +1713,12 @@ const sysReduce = () => window.matchMedia('(prefers-reduced-motion: reduce)').ma
 const reduceMotion = () => !SET.anim.on || (SET.anim.follow && sysReduce());
 const motionOff = (area) => reduceMotion() || !SET.anim.areas[area];
 const dms = (ms) => Math.round(ms * ANIM_SPEED[SET.anim.speed][1]);   // Speed scales everything except swipes
+
+// ---------- swiping between weeks and months ----------
+// Only transforms are animated, so it runs on the graphics chip and costs almost nothing.
+const GAP = 16, REEL_H = 26;
+const snapMs = () => SET.anim.swipe, snapEase = () => ANIM_EASE[SET.anim.ease][1];
+let TR = null, job = null, drag = null, swallowClick = false;
 function bindTrack() {
   job = null;
   const scr = document.getElementById('scr'), swv = scr.querySelector('.swv');
@@ -1767,15 +1742,15 @@ function run(p, dir, done) {
   transitions(true); layout(p);
   const j = { dir, done, fin: false, timer: 0 };
   j.end = (e) => {
-    if (j.fin || (e && (e.target !== TR.trk || e.propertyName !== 'transform'))) return;
-    j.fin = true; clearTimeout(j.timer); TR.trk.removeEventListener('transitionend', j.end); job = null;
-    if (done) done(); else transitions(false);
+    if (j.fin || (e && (!TR || e.target !== TR.trk || e.propertyName !== 'transform'))) return;
+    // TR is null if you moved to Leave or Settings before the slide finished: nothing left to tidy.
+    j.fin = true; clearTimeout(j.timer); if (TR) TR.trk.removeEventListener('transitionend', j.end); job = null;
+    if (done) done(); else if (TR) transitions(false);
   };
   TR.trk.addEventListener('transitionend', j.end);
   j.timer = setTimeout(() => j.end(), snapMs() + 120);
   job = j;
 }
-// dir: 1 = next, -1 = previous, 0 = spring back. target lets ↺ land on today in one slide.
 // Month summary: update as soon as the new month is known (on release, arrow or ↺), with a quick fade.
 let sumA = null;
 function setSummary(mo) {
@@ -1787,6 +1762,7 @@ function setSummary(mo) {
   const a = sumA;
   a.finished.then(() => { if (sumA !== a) return; el.textContent = txt; a.cancel(); sumA = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 75, easing: 'ease-out' }); }, () => {});
 }
+// dir: 1 = next, -1 = previous, 0 = spring back. target lets ↺ land on today in one slide.
 function animateTo(dir, target) {
   if (!TR) return;
   if (dir === 0) { run(0, 0, null); return; }
